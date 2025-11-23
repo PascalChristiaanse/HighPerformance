@@ -1,0 +1,22 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "mpicc: build active file",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "-c",
+                "module load 2024r1 openmpi && mpicc -O2 -o ${fileDirname}/${fileBasenameNoExtension} ${file}"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "detail": "Compile the currently active file using mpicc, loading the required module."
+        }
+    ]
+}
