@@ -1,0 +1,21 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Submit MPI job with sbatch",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/home/pchristiaanse/HighPerformance/assignment_1/pingPong",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "/home/pchristiaanse/HighPerformance/assignment_1",
+            "environment": [],
+            "externalConsole": true,
+            "preLaunchTask": "mpicc: build active file",
+            "postDebugTask": null,
+            "miDebuggerPath": "",
+            "launchMethod": "sbatch",
+            "sbatchScript": "/home/pchristiaanse/HighPerformance/assignment_1/run.sbatch"
+        }
+    ]
+}
