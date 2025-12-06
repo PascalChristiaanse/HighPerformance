@@ -7,6 +7,7 @@
 
 int main(int argc, char **argv)
 {
+    printf("Running ping pong on two nodes ...\n");
     // Variables for the process rank and number of processes
     int myRank, numProcs, i;
     MPI_Status status;
@@ -33,13 +34,13 @@ int main(int argc, char **argv)
     FILE *csv = NULL;
     if (myRank == 0)
     {
-        csv = fopen("pingpong_results.csv", "w");
+        csv = fopen("/home/pchristiaanse/HighPerformance/assignment_1/pingpong_results_two_nodes.csv", "w");
         if (!csv)
         {
             printf("Could not open CSV file for writing!\n");
             MPI_Abort(MPI_COMM_WORLD, 1);
         }
-        fprintf(csv, "elements,time\n");
+        fprintf(csv, "elements,sample_idx,time\n");
     }
 
     // PART C
@@ -50,25 +51,23 @@ int main(int argc, char **argv)
     }
 
     // Loop over message sizes: 1, 2, 4, ..., MAX_ARRAY_SIZE
-    for (int exp = 0; exp <= 20; exp++)
+    for (int exp = 0; exp < 21; exp++)
     {
         numberOfElementsToSend = 1 << exp;
         numberOfElementsReceived = numberOfElementsToSend;
-        double startTime = 0.0, endTime = 0.0;
-
         if (myRank == 0)
         {
             myArray[0] = myArray[1] + 1;
-            startTime = MPI_Wtime();
             for (i = 0; i < 5; i++)
             {
+                double startTime = MPI_Wtime();
                 MPI_Send(myArray, numberOfElementsToSend, MPI_INT, 1, 0, MPI_COMM_WORLD);
                 MPI_Recv(myArray, numberOfElementsReceived, MPI_INT, 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                double endTime = MPI_Wtime();
+                double sampleTime = endTime - startTime;
+                fprintf(csv, "%d,%d,%f\n", numberOfElementsToSend, i, sampleTime);
+                printf("Elements: %d, Sample %d, Time: %f\n", numberOfElementsToSend, i, sampleTime);
             }
-            endTime = MPI_Wtime();
-            double avgTime = (endTime - startTime) / 10.0;
-            fprintf(csv, "%d,%f\n", numberOfElementsToSend, avgTime);
-            printf("Elements: %d, Avg time: %f\n", numberOfElementsToSend, avgTime);
         }
         else if (myRank == 1)
         {
