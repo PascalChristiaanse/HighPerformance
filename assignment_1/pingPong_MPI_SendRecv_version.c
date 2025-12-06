@@ -34,7 +34,7 @@ int main(int argc, char **argv)
     FILE *csv = NULL;
     if (myRank == 0)
     {
-        csv = fopen("/home/pchristiaanse/HighPerformance/assignment_1/pingpong_results_MPI_SendRecv_version.csv", "w");
+        csv = fopen("/home/pchristiaanse/HighPerformance/assignment_1/pingpong_results_MPI_SendRecv_version_two_nodes.csv", "w");
         if (!csv)
         {
             printf("Could not open CSV file for writing!\n");
