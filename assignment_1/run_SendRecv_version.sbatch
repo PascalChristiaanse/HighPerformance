@@ -1,0 +1,13 @@
+#!/bin/sh
+#
+#SBATCH --job-name="pingPong_MPI_SendRecv_version"
+#SBATCH --partition=compute
+#SBATCH --time=01:00:00
+#SBATCH --ntasks=2
+#SBATCH --nodes=2
+#SBATCH --cpus-per-task=1
+#SBATCH --mem-per-cpu=1G
+#SBATCH --account=Education-EEMCS-Courses-WI4049TU
+
+srun /home/pchristiaanse/HighPerformance/assignment_1/pingPong_MPI_SendRecv_version > /home/pchristiaanse/HighPerformance/assignment_1/output.log
+  
