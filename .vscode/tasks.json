@@ -17,6 +17,20 @@
                 "$gcc"
             ],
             "detail": "Compile the currently active file using mpicc, loading the required module."
+        },
+        {
+            "label": "mpicxx: build MM-product with Eigen",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "-c",
+                "module load 2024r1 openmpi && mpicxx -O2 -I${workspaceFolder}/assignment_1/MM_product/eigen-5.0.1 -o ${workspaceFolder}/assignment_1/MM_product/MM-product ${workspaceFolder}/assignment_1/MM_product/MM-product.cpp"
+            ],
+            "group": "build",
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "detail": "Compile MM-product.cpp with Eigen headers and MPI support."
         }
     ]
 }
