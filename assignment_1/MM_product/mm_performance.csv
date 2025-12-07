@@ -1,0 +1,9 @@
+method,matrix_size,num_procs,time_ms
+basic,1000,1,1153.51
+eigen,1000,1,132.575
+summa,1000,1,1154.93
+summa,1000,2,568.447
+summa,1000,8,141.529
+summa,1000,24,48.1401
+summa,1000,48,24.8612
+summa,1000,64,20.0087
