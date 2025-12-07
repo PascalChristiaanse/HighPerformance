@@ -273,7 +273,7 @@ def main():
     ax[1].grid(
         which="both", axis="y", linestyle="--", alpha=0.4
     )  # Minor ticks on y-axis
-    plt.savefig("assignment_1/linear_trend_regular.png")
+    # plt.savefig("assignment_1/linear_trend_regular.png")
     plt.show()
 
 

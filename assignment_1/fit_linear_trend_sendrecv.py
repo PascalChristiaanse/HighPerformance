@@ -104,7 +104,7 @@ def main():
 
     # Read data from CSV
     no_elements, times, stds, samples_per_element = read_data_from_csv(
-        "assignment_1/pingpong_results_send-receive.csv"
+        "assignment_1/pingpong_results_MPI_SendRecv_version.csv"
     )
 
     # Filters for regular order
@@ -173,7 +173,7 @@ def main():
 
     # Load two node case
     no_elements, times, stds, samples_per_element = read_data_from_csv(
-        "assignment_1/pingpong_results_two_nodes.csv"
+        "assignment_1/pingpong_results_MPI_SendRecv_version_two_nodes.csv"
     )
     # Filter out first sample
     no_elements = no_elements[1:]
@@ -244,8 +244,8 @@ def main():
     )
 
     # Format Graphs
-    ax[0].set_ylim(1, 1500)
-    ax[1].set_ylim(1, 1500)
+    ax[0].set_ylim(1e-1, 1500)
+    ax[1].set_ylim(1e-1, 1500)
     ax[0].set_xlim(-1, 21)
     ax[1].set_xlim(-1, 21)
     ax[0].set_xlabel(r"$\log_2(\#\text{No of Elements})$")
@@ -273,7 +273,7 @@ def main():
     ax[1].grid(
         which="both", axis="y", linestyle="--", alpha=0.4
     )  # Minor ticks on y-axis
-    # plt.savefig("assignment_1/linear_trend_regular.png")
+    plt.savefig("assignment_1/linear_trend_sendrecv.png")
     plt.show()
 
 
