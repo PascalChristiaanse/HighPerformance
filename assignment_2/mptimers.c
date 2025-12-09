@@ -9,7 +9,6 @@ void start_timer()
 	}
 }
 
- 
 void resume_timer()
 {
 	if (!timer_on)

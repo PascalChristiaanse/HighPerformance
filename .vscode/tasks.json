@@ -31,6 +31,32 @@
                 "$gcc"
             ],
             "detail": "Compile MM-product.cpp with Eigen headers and MPI support."
+        },
+        {
+            "label": "cmake: configure Poisson",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "-c",
+                "module load 2024r1 openmpi cmake && cd ${workspaceFolder} && cmake --preset default"
+            ],
+            "problemMatcher": [],
+            "detail": "Configure CMake for Poisson solver project."
+        },
+        {
+            "label": "cmake: build Poisson",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "-c",
+                "module load 2024r1 openmpi cmake && cd ${workspaceFolder} && cmake --build build"
+            ],
+            "group": "build",
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "detail": "Build SEQ_Poisson and PAR_Poisson using CMake.",
+            "dependsOn": "cmake: configure Poisson"
         }
     ]
 }
