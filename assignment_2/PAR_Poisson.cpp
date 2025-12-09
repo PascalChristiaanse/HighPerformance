@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <math.h>
 #include <time.h>
+#include <string_view>
+#include <iostream>
 
 #define DEBUG 0
 
@@ -37,7 +39,6 @@ double Do_Step(int parity);
 void Solve();
 void Write_Grid();
 void Clean_Up();
-void Debug(char *mesg, int terminate);
 void start_timer();
 void resume_timer();
 void stop_timer();
@@ -82,10 +83,10 @@ void print_timer()
     printf("Elapsed processortime: %14.6f s\n", ticks * (1.0 / CLOCKS_PER_SEC));
 }
 
-void Debug(char *mesg, int terminate)
+void Debug(std::string_view mesg, bool terminate = false)
 {
   if (DEBUG || terminate)
-    printf("%s\n", mesg);
+    std::cout << mesg << std::endl;
   if (terminate)
     exit(1);
 }
@@ -96,11 +97,11 @@ void Setup_Grid()
   double source_x, source_y, source_val;
   FILE *f;
 
-  Debug("Setup_Subgrid", 0);
+  Debug("Setup_Grid");
 
   f = fopen("/home/pchristiaanse/HighPerformance/assignment_2/input.dat", "r");
   if (f == NULL)
-    Debug("Error opening input file. Check directory...", 1);
+    Debug("Error opening input file. Check directory...", true);
   fscanf(f, "nx: %i\n", &gridsize[X_DIR]);
   fscanf(f, "ny: %i\n", &gridsize[Y_DIR]);
   fscanf(f, "precision goal: %lf\n", &precision_goal);
@@ -111,14 +112,10 @@ void Setup_Grid()
   dim[Y_DIR] = gridsize[Y_DIR] + 2;
 
   /* allocate memory */
-  if ((phi = malloc(dim[X_DIR] * sizeof(*phi))) == NULL)
-    Debug("Setup_Subgrid : malloc(phi) failed", 1);
-  if ((source = malloc(dim[X_DIR] * sizeof(*source))) == NULL)
-    Debug("Setup_Subgrid : malloc(source) failed", 1);
-  if ((phi[0] = malloc(dim[Y_DIR] * dim[X_DIR] * sizeof(**phi))) == NULL)
-    Debug("Setup_Subgrid : malloc(*phi) failed", 1);
-  if ((source[0] = malloc(dim[Y_DIR] * dim[X_DIR] * sizeof(**source))) == NULL)
-    Debug("Setup_Subgrid : malloc(*source) failed", 1);
+  phi = new double *[dim[X_DIR]];
+  source = new int *[dim[X_DIR]];
+  phi[0] = new double[dim[Y_DIR] * dim[X_DIR]];
+  source[0] = new int[dim[Y_DIR] * dim[X_DIR]];
   for (x = 1; x < dim[X_DIR]; x++)
   {
     phi[x] = phi[0] + x * dim[Y_DIR];
@@ -179,17 +176,17 @@ void Solve()
   double delta;
   double delta1, delta2;
 
-  Debug("Solve", 0);
+  Debug("Solve");
 
   /* give global_delta a higher value then precision_goal */
   delta = 2 * precision_goal;
 
   while (delta > precision_goal && count < max_iter)
   {
-    Debug("Do_Step 0", 0);
+    Debug("Do_Step 0");
     delta1 = Do_Step(0);
 
-    Debug("Do_Step 1", 0);
+    Debug("Do_Step 1");
     delta2 = Do_Step(1);
 
     delta = max(delta1, delta2);
@@ -205,9 +202,9 @@ void Write_Grid()
   FILE *f;
 
   if ((f = fopen("output.dat", "w")) == NULL)
-    Debug("Write_Grid : fopen failed", 1);
+    Debug("Write_Grid : fopen failed", true);
 
-  Debug("Write_Grid", 0);
+  Debug("Write_Grid");
 
   for (x = 1; x < dim[X_DIR] - 1; x++)
     for (y = 1; y < dim[Y_DIR] - 1; y++)
@@ -218,12 +215,12 @@ void Write_Grid()
 
 void Clean_Up()
 {
-  Debug("Clean_Up", 0);
+  Debug("Clean_Up");
 
-  free(phi[0]);
-  free(phi);
-  free(source[0]);
-  free(source);
+  delete[] phi[0];
+  delete[] phi;
+  delete[] source[0];
+  delete[] source;
 }
 
 int main(int argc, char **argv)

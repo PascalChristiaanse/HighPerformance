@@ -1,0 +1,15 @@
+{
+    "cmake.cmakePath": "/apps/arch/2024r1/software/linux-rhel8-cascadelake/gcc-11.3.0/cmake-3.27.7-accbxq32y3yjlxp5exwhtuk4ulrwmdcb/bin/cmake",
+    "cmake.useCMakePresets": "always",
+    "cmake.configureSettings": {
+        "CMAKE_CXX_COMPILER": "/apps/arch/2024r1/software/linux-rhel8-cascadelake/gcc-11.3.0/openmpi-4.1.6-w6w5qi5ljesbctyoojlfialbynqt25jb/bin/mpicxx",
+        "CMAKE_C_COMPILER": "/apps/arch/2024r1/software/linux-rhel8-cascadelake/gcc-11.3.0/openmpi-4.1.6-w6w5qi5ljesbctyoojlfialbynqt25jb/bin/mpicc"
+    },
+    "cmake.generator": "Ninja",
+    "cmake.configureEnvironment": {
+        "PATH": "/apps/arch/2024r1/software/linux-rhel8-cascadelake/gcc-11.3.0/ninja-1.11.1-veqekudwtwngjsjtxu2d7fzv7k3bnn56/bin:/apps/arch/2024r1/software/linux-rhel8-cascadelake/gcc-11.3.0/openmpi-4.1.6-w6w5qi5ljesbctyoojlfialbynqt25jb/bin:/apps/arch/2024r1/software/linux-rhel8-cascadelake/gcc-11.3.0/cmake-3.27.7-accbxq32y3yjlxp5exwhtuk4ulrwmdcb/bin:/apps/generic/compiler-2024/software/linux-rhel8-x86_64_v3/gcc-8.5.0/gcc-11.3.0-ifl4t3krdzkcrmejbgj5reljeokuv3vs/bin:${env:PATH}"
+    },
+    "cmake.buildEnvironment": {
+        "PATH": "/apps/arch/2024r1/software/linux-rhel8-cascadelake/gcc-11.3.0/ninja-1.11.1-veqekudwtwngjsjtxu2d7fzv7k3bnn56/bin:/apps/arch/2024r1/software/linux-rhel8-cascadelake/gcc-11.3.0/openmpi-4.1.6-w6w5qi5ljesbctyoojlfialbynqt25jb/bin:/apps/arch/2024r1/software/linux-rhel8-cascadelake/gcc-11.3.0/cmake-3.27.7-accbxq32y3yjlxp5exwhtuk4ulrwmdcb/bin:/apps/generic/compiler-2024/software/linux-rhel8-x86_64_v3/gcc-8.5.0/gcc-11.3.0-ifl4t3krdzkcrmejbgj5reljeokuv3vs/bin:${env:PATH}"
+    }
+}

@@ -1,0 +1,59 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "cmake",
+			"label": "CMake: build",
+			"command": "build",
+			"targets": [
+				"all"
+			],
+			"group": "build",
+			"problemMatcher": [],
+			"detail": "CMake template build task"
+		},
+		{
+			"label": "Submit SBATCH Job",
+			"type": "shell",
+			"command": "sbatch",
+			"args": [
+				"${workspaceFolder}/run.sbatch"
+			],
+			"group": "test",
+			"problemMatcher": [],
+			"detail": "Submit PAR_Poisson job to SLURM"
+		},
+		{
+			"label": "Build and Submit",
+			"dependsOn": [
+				"CMake: build",
+				"Submit SBATCH Job"
+			],
+			"dependsOrder": "sequence",
+			"group": "test",
+			"problemMatcher": [],
+			"detail": "Build project then submit to SLURM"
+		},
+		{
+			"label": "Check Job Queue",
+			"type": "shell",
+			"command": "squeue",
+			"args": [
+				"-u",
+				"${env:USER}"
+			],
+			"problemMatcher": [],
+			"detail": "Check your SLURM job queue"
+		},
+		{
+			"label": "View Output Log",
+			"type": "shell",
+			"command": "cat",
+			"args": [
+				"${workspaceFolder}/output.log"
+			],
+			"problemMatcher": [],
+			"detail": "View the output from the last job"
+		}
+	]
+}

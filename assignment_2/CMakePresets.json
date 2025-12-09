@@ -2,34 +2,25 @@
     "version": 6,
     "configurePresets": [
         {
-            "name": "default",
-            "displayName": "Default Config",
-            "description": "Default build configuration with Release mode",
-            "binaryDir": "${sourceDir}/build",
+            "name": "debug-mpicxx-ninja",
+            "displayName": "Debug build MPI Cxx Compiler with Ninja",
+            "description": "Sets Ninja generator, build and install directory with 2024r1 module",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/${presetName}",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Release"
-            }
-        },
-        {
-            "name": "debug",
-            "displayName": "Debug Config",
-            "description": "Debug build configuration",
-            "binaryDir": "${sourceDir}/build-debug",
-            "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug"
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_INSTALL_PREFIX": "${sourceDir}/install/${presetName}",
+                "CMAKE_CXX_COMPILER": "mpicxx",
+                "CMAKE_C_COMPILER": "mpicc"
             }
         }
     ],
     "buildPresets": [
         {
-            "name": "default",
-            "displayName": "Default Build",
-            "configurePreset": "default"
-        },
-        {
-            "name": "debug",
-            "displayName": "Debug Build",
-            "configurePreset": "debug"
+            "name": "debug-mpicxx-ninja",
+            "configurePreset": "debug-mpicxx-ninja",
+            "displayName": "Debug Build MPI Cxx Compiler with Ninja",
+            "description": "Build with debug configuration"
         }
     ]
 }
