@@ -1,241 +1,263 @@
 /*
- * PAR_Poisson.c
+ * PAR_Poisson.cpp
  * Parallel 2D Poisson equation solver using MPI
+ *
+ * Refactored OOP version using modern C++17
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
-#include <time.h>
-#include <string_view>
+#include "poisson/Solver.hpp"
+#include "poisson/Config.hpp"
+#include "poisson/Timer.hpp"
+#include "io/FileManager.hpp"
+#include "io/AsciiWriter.hpp"
+#include "io/HDF5Writer.hpp"
+#include "io/IterationRecorder.hpp"
+#include "mpi/MPIContext.hpp"
+
 #include <iostream>
+#include <iomanip>
+#include <filesystem>
+#include <cstring>
 
-#define DEBUG 0
+// Debug flag
+constexpr bool DEBUG_MODE = false;
 
-#define max(a, b) ((a) > (b) ? a : b)
-
-enum
+// Command line options
+struct ProgramOptions
 {
-  X_DIR,
-  Y_DIR
+  std::filesystem::path configPath = "input.dat";
+  std::filesystem::path outputPath = "output";
+  bool useHDF5 = false;
+  bool recordIterations = false;
+  int saveInterval = 100; // Save every N iterations
 };
 
-/* global variables */
-int gridsize[2];
-double precision_goal; /* precision_goal of solution */
-int max_iter;          /* maximum number of iterations alowed */
-
-/* benchmark related variables */
-clock_t ticks;    /* number of systemticks */
-int timer_on = 0; /* is timer running? */
-
-/* local grid related variables */
-double **phi; /* grid */
-int **source; /* TRUE if subgrid element is a source */
-int dim[2];   /* grid dimensions */
-
-void Setup_Grid();
-double Do_Step(int parity);
-void Solve();
-void Write_Grid();
-void Clean_Up();
-void start_timer();
-void resume_timer();
-void stop_timer();
-void print_timer();
-
-void start_timer()
+void printUsage(const char *progName)
 {
-  if (!timer_on)
-  {
-    ticks = clock();
-    timer_on = 1;
-  }
+  std::cout << "Usage: " << progName << " [options] [config_file]\n"
+            << "\nOptions:\n"
+            << "  -h, --help              Show this help message\n"
+            << "  -o, --output PATH       Output file base path (default: output)\n"
+            << "  --hdf5                  Use HDF5 output format (requires HDF5 support)\n"
+            << "  --record-iterations     Record intermediate iterations (implies --hdf5)\n"
+            << "  --save-interval N       Save every N iterations (default: 100)\n"
+            << "\nExamples:\n"
+            << "  " << progName << " input.dat\n"
+            << "  " << progName << " --hdf5 -o solution input.dat\n"
+            << "  " << progName << " --record-iterations --save-interval 50 input.dat\n";
 }
 
-void resume_timer()
+ProgramOptions parseArgs(int argc, char **argv)
 {
-  if (!timer_on)
+  ProgramOptions opts;
+
+  for (int i = 1; i < argc; ++i)
   {
-    ticks = clock() - ticks;
-    timer_on = 1;
-  }
-}
+    std::string arg = argv[i];
 
-void stop_timer()
-{
-  if (timer_on)
-  {
-    ticks = clock() - ticks;
-    timer_on = 0;
-  }
-}
-
-void print_timer()
-{
-  if (timer_on)
-  {
-    stop_timer();
-    printf("Elapsed processortime: %14.6f s\n", ticks * (1.0 / CLOCKS_PER_SEC));
-    resume_timer();
-  }
-  else
-    printf("Elapsed processortime: %14.6f s\n", ticks * (1.0 / CLOCKS_PER_SEC));
-}
-
-void Debug(std::string_view mesg, bool terminate = false)
-{
-  if (DEBUG || terminate)
-    std::cout << mesg << std::endl;
-  if (terminate)
-    exit(1);
-}
-
-void Setup_Grid()
-{
-  int x, y, s;
-  double source_x, source_y, source_val;
-  FILE *f;
-
-  Debug("Setup_Grid");
-
-  f = fopen("/home/pchristiaanse/HighPerformance/assignment_2/input.dat", "r");
-  if (f == NULL)
-    Debug("Error opening input file. Check directory...", true);
-  fscanf(f, "nx: %i\n", &gridsize[X_DIR]);
-  fscanf(f, "ny: %i\n", &gridsize[Y_DIR]);
-  fscanf(f, "precision goal: %lf\n", &precision_goal);
-  fscanf(f, "max iterations: %i\n", &max_iter);
-
-  /* Calculate dimensions of local subgrid */
-  dim[X_DIR] = gridsize[X_DIR] + 2;
-  dim[Y_DIR] = gridsize[Y_DIR] + 2;
-
-  /* allocate memory */
-  phi = new double *[dim[X_DIR]];
-  source = new int *[dim[X_DIR]];
-  phi[0] = new double[dim[Y_DIR] * dim[X_DIR]];
-  source[0] = new int[dim[Y_DIR] * dim[X_DIR]];
-  for (x = 1; x < dim[X_DIR]; x++)
-  {
-    phi[x] = phi[0] + x * dim[Y_DIR];
-    source[x] = source[0] + x * dim[Y_DIR];
-  }
-
-  /* set all values to '0' */
-  for (x = 0; x < dim[X_DIR]; x++)
-    for (y = 0; y < dim[Y_DIR]; y++)
+    if (arg == "-h" || arg == "--help")
     {
-      phi[x][y] = 0.0;
-      source[x][y] = 0;
+      printUsage(argv[0]);
+      std::exit(0);
     }
-
-  /* put sources in field */
-  do
-  {
-    s = fscanf(f, "source: %lf %lf %lf\n", &source_x, &source_y, &source_val);
-    if (s == 3)
+    else if (arg == "-o" || arg == "--output")
     {
-      x = source_x * gridsize[X_DIR];
-      y = source_y * gridsize[Y_DIR];
-      x += 1;
-      y += 1;
-      phi[x][y] = source_val;
-      source[x][y] = 1;
-    }
-  } while (s == 3);
-
-  fclose(f);
-}
-
-double Do_Step(int parity)
-{
-  int x, y;
-  double old_phi;
-  double max_err = 0.0;
-
-  /* calculate interior of grid */
-  for (x = 1; x < dim[X_DIR] - 1; x++)
-    for (y = 1; y < dim[Y_DIR] - 1; y++)
-      if ((x + y) % 2 == parity && source[x][y] != 1)
+      if (i + 1 < argc)
       {
-        old_phi = phi[x][y];
-        phi[x][y] = (phi[x + 1][y] + phi[x - 1][y] +
-                     phi[x][y + 1] + phi[x][y - 1]) *
-                    0.25;
-        if (max_err < fabs(old_phi - phi[x][y]))
-          max_err = fabs(old_phi - phi[x][y]);
+        opts.outputPath = argv[++i];
       }
-
-  return max_err;
-}
-
-void Solve()
-{
-  int count = 0;
-  double delta;
-  double delta1, delta2;
-
-  Debug("Solve");
-
-  /* give global_delta a higher value then precision_goal */
-  delta = 2 * precision_goal;
-
-  while (delta > precision_goal && count < max_iter)
-  {
-    Debug("Do_Step 0");
-    delta1 = Do_Step(0);
-
-    Debug("Do_Step 1");
-    delta2 = Do_Step(1);
-
-    delta = max(delta1, delta2);
-    count++;
+    }
+    else if (arg == "--hdf5")
+    {
+      opts.useHDF5 = true;
+    }
+    else if (arg == "--record-iterations")
+    {
+      opts.recordIterations = true;
+      opts.useHDF5 = true; // Iteration recording requires HDF5
+    }
+    else if (arg == "--save-interval")
+    {
+      if (i + 1 < argc)
+      {
+        opts.saveInterval = std::stoi(argv[++i]);
+      }
+    }
+    else if (arg[0] != '-')
+    {
+      opts.configPath = arg;
+    }
   }
 
-  printf("Number of iterations : %i\n", count);
+  return opts;
 }
 
-void Write_Grid()
+void printDebug(const std::string &msg)
 {
-  int x, y;
-  FILE *f;
-
-  if ((f = fopen("output.dat", "w")) == NULL)
-    Debug("Write_Grid : fopen failed", true);
-
-  Debug("Write_Grid");
-
-  for (x = 1; x < dim[X_DIR] - 1; x++)
-    for (y = 1; y < dim[Y_DIR] - 1; y++)
-      fprintf(f, "%i %i %f\n", x, y, phi[x][y]);
-
-  fclose(f);
-}
-
-void Clean_Up()
-{
-  Debug("Clean_Up");
-
-  delete[] phi[0];
-  delete[] phi;
-  delete[] source[0];
-  delete[] source;
+  if (DEBUG_MODE)
+  {
+    std::cout << msg << std::endl;
+  }
 }
 
 int main(int argc, char **argv)
 {
-  start_timer();
+  using namespace poisson;
 
-  Setup_Grid();
+  // Initialize MPI
+  MPIContext mpi(argc, argv);
 
-  Solve();
+  try
+  {
+    // Parse command line options
+    auto opts = parseArgs(argc, argv);
 
-  Write_Grid();
+    // Determine input file path
+    std::filesystem::path configPath = opts.configPath;
+    if (!std::filesystem::exists(configPath))
+    {
+      // Try relative to executable
+      auto execPath = std::filesystem::path(__FILE__).parent_path() / configPath;
+      if (std::filesystem::exists(execPath))
+      {
+        configPath = execPath;
+      }
+    }
 
-  print_timer();
+    printDebug("Loading config from: " + configPath.string());
 
-  Clean_Up();
+    // Load configuration
+    auto config = Config::fromFile(configPath);
+
+    if (mpi.isRoot())
+    {
+      std::cout << "Grid size: " << config.nx() << " x " << config.ny() << std::endl;
+      std::cout << "Precision goal: " << config.precisionGoal() << std::endl;
+      std::cout << "Max iterations: " << config.maxIterations() << std::endl;
+      std::cout << "Source points: " << config.sources().size() << std::endl;
+
+      if (opts.useHDF5)
+      {
+        std::cout << "Output format: HDF5+XDMF" << std::endl;
+        if (opts.recordIterations)
+        {
+          std::cout << "Iteration recording: enabled (interval=" << opts.saveInterval << ")" << std::endl;
+        }
+      }
+      else
+      {
+        std::cout << "Output format: ASCII" << std::endl;
+      }
+    }
+
+    // Create solver (serial for now)
+    Solver solver(config);
+
+    // Set up iteration recorder if requested
+    std::unique_ptr<io::IterationRecorder> recorder;
+    if (opts.recordIterations)
+    {
+      recorder = std::make_unique<io::IterationRecorder>(
+          config, opts.outputPath, mpi.rank(), mpi.size());
+
+      if (!recorder->enable(opts.saveInterval))
+      {
+        if (mpi.isRoot())
+        {
+          std::cerr << "Warning: Failed to enable iteration recording: "
+                    << recorder->lastError() << std::endl;
+          std::cerr << "Falling back to final-only output." << std::endl;
+        }
+        recorder.reset();
+      }
+      else
+      {
+        // Set the progress callback for iteration recording
+        solver.setProgressCallback(recorder->createCallback());
+      }
+    }
+
+    printDebug("Setup complete, starting solve...");
+
+    // Solve with timing
+    Timer timer;
+    timer.start();
+
+    auto result = solver.solve();
+
+    // Finalize iteration recording
+    if (recorder && recorder->isEnabled())
+    {
+      recorder->finalize();
+    }
+
+    timer.stop();
+
+    // Print results (only from root in parallel case)
+    if (mpi.isRoot())
+    {
+      std::cout << "\n=== Results ===" << std::endl;
+      std::cout << "Number of iterations: " << result.iterations << std::endl;
+      std::cout << "Converged: " << (result.converged ? "yes" : "no") << std::endl;
+      std::cout << "Final residual: " << std::scientific << std::setprecision(6)
+                << result.finalResidual << std::endl;
+      std::cout << "Elapsed time: " << std::fixed << std::setprecision(6)
+                << timer.elapsedSeconds() << " s" << std::endl;
+
+      if (recorder && recorder->isEnabled())
+      {
+        std::cout << "Iterations recorded: " << recorder->recordedCount() << std::endl;
+      }
+    }
+
+    // Write final output (skip if iterations were recorded - they include final state)
+    if (!opts.recordIterations)
+    {
+      printDebug("Writing output...");
+
+      if (opts.useHDF5)
+      {
+        auto writer = io::FileManager::create(io::OutputFormat::HDF5_XDMF, mpi.rank(), mpi.size());
+        if (!writer->write(solver.grid(), config, opts.outputPath))
+        {
+          if (mpi.isRoot())
+          {
+            std::cerr << "Warning: Failed to write HDF5 output: " << writer->lastError() << std::endl;
+          }
+        }
+        else if (mpi.isRoot())
+        {
+          std::cout << "Output written to: " << opts.outputPath.string() << ".h5" << std::endl;
+        }
+      }
+      else
+      {
+        auto writer = io::FileManager::create(io::OutputFormat::Ascii);
+        if (!writer->write(solver.grid(), config, opts.outputPath))
+        {
+          if (mpi.isRoot())
+          {
+            std::cerr << "Warning: Failed to write output: " << writer->lastError() << std::endl;
+          }
+        }
+        else if (mpi.isRoot())
+        {
+          std::cout << "Output written to: " << opts.outputPath.string() << ".txt" << std::endl;
+        }
+      }
+    }
+    else if (mpi.isRoot())
+    {
+      std::cout << "Output written to: " << opts.outputPath.string() << ".h5 and .xdmf" << std::endl;
+    }
+
+    printDebug("Done!");
+  }
+  catch (const std::exception &e)
+  {
+    std::cerr << "Error: " << e.what() << std::endl;
+    return 1;
+  }
 
   return 0;
 }
