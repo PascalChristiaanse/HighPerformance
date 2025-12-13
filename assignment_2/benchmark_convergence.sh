@@ -9,7 +9,7 @@ EXECUTABLE="./build/debug-mpicxx-ninja/PAR_Poisson"
 CONFIG_FILE="input.dat"
 
 # Solver parameters
-OMEGA=1.95
+OMEGA=1.8
 SOLVER="sor"
 NUM_PROCS=4
 TOPOLOGY="2x2"
