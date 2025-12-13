@@ -48,6 +48,10 @@ struct ProgramOptions
   int gridNx = 100;                           // Override grid X size (-1 = use config file)
   int gridNy = 100;                           // Override grid Y size (-1 = use config file)
   int maxIterations = 100000;                    // Override max iterations (-1 = use config file)
+  
+  // Processor topology options
+  int procX = 0;                              // Processor grid X dimension (0 = auto)
+  int procY = 0;                              // Processor grid Y dimension (0 = auto)
 };
 
 void printUsage(const char *progName)
@@ -70,6 +74,10 @@ void printUsage(const char *progName)
             << "  --ny N                  Override grid Y size\n"
             << "  --grid-size N           Set both nx and ny to N\n"
             << "  --max-iter N            Override maximum iterations\n"
+            << "\nProcessor Topology Options:\n"
+            << "  --px N                  Processor grid X dimension (0 = auto)\n"
+            << "  --py N                  Processor grid Y dimension (0 = auto)\n"
+            << "  --topology PxQ          Set processor topology (e.g., 4x1, 2x2)\n"
             << "\nTelemetry Options:\n"
             << "  --verbose-timing        Print detailed timing summary\n"
             << "  --timing-output PATH    Write per-iteration timing data to CSV file\n"
@@ -191,6 +199,34 @@ ProgramOptions parseArgs(int argc, char **argv)
         opts.maxIterations = std::stoi(argv[++i]);
       }
     }
+    // Processor topology options
+    else if (arg == "--px")
+    {
+      if (i + 1 < argc)
+      {
+        opts.procX = std::stoi(argv[++i]);
+      }
+    }
+    else if (arg == "--py")
+    {
+      if (i + 1 < argc)
+      {
+        opts.procY = std::stoi(argv[++i]);
+      }
+    }
+    else if (arg == "--topology")
+    {
+      if (i + 1 < argc)
+      {
+        std::string topo = argv[++i];
+        size_t xPos = topo.find('x');
+        if (xPos != std::string::npos)
+        {
+          opts.procX = std::stoi(topo.substr(0, xPos));
+          opts.procY = std::stoi(topo.substr(xPos + 1));
+        }
+      }
+    }
     // Telemetry options
     else if (arg == "--verbose-timing")
     {
@@ -224,15 +260,19 @@ int main(int argc, char **argv)
 {
   using namespace poisson;
 
+  // Parse command line options early (before MPI topology setup)
+  auto opts = parseArgs(argc, argv);
+
   // Initialize MPI
   auto mpi = std::make_shared<poisson::MPIContext>(argc, argv);
-  mpi->createCartesian({4, 1}, {false, false}); // Let MPI decide decomposition. non periodic boundaries
+  
+  // Set up Cartesian topology based on command line options
+  // If procX and procY are 0, MPI will decide the decomposition
+  mpi->createCartesian({opts.procX, opts.procY}, {false, false});
 
 
   try
   {
-    // Parse command line options
-    auto opts = parseArgs(argc, argv);
     printf("Process %d/%d starting...\n", mpi->rank(), mpi->size());
     // Determine input file path
     std::filesystem::path configPath = opts.configPath;
