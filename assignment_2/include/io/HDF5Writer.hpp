@@ -8,21 +8,30 @@
 #include <hdf5.h>
 #endif
 
+#include <mpi.h>
+
 namespace io
 {
 
     /// HDF5 + XDMF3 file writer for Paraview visualization
     /// Supports both single snapshots and time series (iteration recording)
+    /// Supports parallel I/O when MPI communicator is provided
     class HDF5Writer final : public FileManager
     {
     public:
         /// Default constructor for serial use
         HDF5Writer();
 
-        /// Constructor for MPI use
+        /// Constructor for MPI use (separate files per rank)
         /// @param mpiRank This process's rank
         /// @param mpiSize Total number of processes
         HDF5Writer(int mpiRank, int mpiSize);
+
+        /// Constructor for parallel I/O (single shared file)
+        /// @param mpiRank This process's rank
+        /// @param mpiSize Total number of processes
+        /// @param comm MPI communicator for parallel I/O
+        HDF5Writer(int mpiRank, int mpiSize, MPI_Comm comm);
 
         ~HDF5Writer() override;
 
@@ -123,6 +132,7 @@ namespace io
 
         std::optional<int> mpiRank_;
         std::optional<int> mpiSize_;
+        std::optional<MPI_Comm> mpiComm_;  ///< MPI communicator for parallel I/O
         mutable std::string lastError_;
 
         // Time series state

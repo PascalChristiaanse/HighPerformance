@@ -6,6 +6,7 @@
 #include <string>
 #include <memory>
 #include <optional>
+#include <mpi.h>
 
 namespace io
 {
@@ -59,7 +60,7 @@ namespace io
         /// Get the last error message
         [[nodiscard]] virtual std::string lastError() const noexcept = 0;
 
-        /// Factory method to create a FileManager
+        /// Factory method to create a FileManager (separate files per rank)
         /// @param format Desired output format
         /// @param mpiRank Optional MPI rank for parallel file naming
         /// @param mpiSize Optional MPI size for parallel I/O
@@ -67,6 +68,17 @@ namespace io
             OutputFormat format,
             std::optional<int> mpiRank = std::nullopt,
             std::optional<int> mpiSize = std::nullopt);
+
+        /// Factory method to create a FileManager with parallel I/O (single shared file)
+        /// @param format Desired output format
+        /// @param mpiRank MPI rank
+        /// @param mpiSize MPI size
+        /// @param comm MPI communicator for collective I/O
+        [[nodiscard]] static std::unique_ptr<FileManager> createParallel(
+            OutputFormat format,
+            int mpiRank,
+            int mpiSize,
+            MPI_Comm comm);
     };
 
 } // namespace io

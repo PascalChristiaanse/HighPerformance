@@ -5,10 +5,8 @@ namespace io
 
     IterationRecorder::IterationRecorder(
         const poisson::Config &config,
-        const std::filesystem::path &basePath,
-        int mpiRank,
-        int mpiSize)
-        : config_(config), basePath_(basePath), mpiRank_(mpiRank), mpiSize_(mpiSize)
+        const std::filesystem::path &basePath)
+        : config_(config), basePath_(basePath)
     {
     }
 
@@ -34,17 +32,8 @@ namespace io
             return false;
         }
 
-        // Only rank 0 actually writes in parallel mode
-        // (or all ranks if we later add parallel HDF5 support)
-        if (mpiRank_ != 0)
-        {
-            // Non-root ranks just mark as enabled but don't write
-            enabled_ = true;
-            saveInterval_ = saveInterval;
-            return true;
-        }
-
-        writer_ = std::make_unique<HDF5Writer>(mpiRank_, mpiSize_);
+        // Each rank writes its own file
+        writer_ = std::make_unique<HDF5Writer>();
 
         if (!writer_->openTimeSeries(basePath_, config_))
         {
@@ -84,13 +73,6 @@ namespace io
             return true; // Skip this iteration
         }
 
-        // Non-root ranks just count
-        if (mpiRank_ != 0)
-        {
-            ++recordedCount_;
-            return true;
-        }
-
         if (!writer_ || finalized_)
         {
             lastError_ = "Recorder not properly initialized or already finalized";
@@ -117,12 +99,6 @@ namespace io
         finalized_ = true;
 
         if (!enabled_)
-        {
-            return true;
-        }
-
-        // Non-root ranks have nothing to finalize
-        if (mpiRank_ != 0)
         {
             return true;
         }

@@ -4,14 +4,15 @@
         {
             "name": "debug-mpicxx-ninja",
             "displayName": "Debug build MPI Cxx Compiler with Ninja",
-            "description": "Sets Ninja generator, build and install directory with 2024r1 module",
+            "description": "Sets Ninja generator, build and install directory with HDF5 support",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/${presetName}",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
                 "CMAKE_INSTALL_PREFIX": "${sourceDir}/install/${presetName}",
                 "CMAKE_CXX_COMPILER": "mpicxx",
-                "CMAKE_C_COMPILER": "mpicc"
+                "CMAKE_C_COMPILER": "mpicc",
+                "POISSON_ENABLE_HDF5": "ON"
             }
         }
     ],

@@ -6,7 +6,7 @@
 #   --hdf5    Also load HDF5 module for HDF5+XDMF output support
 
 echo "Loading HPC development modules (2024r1)..."
-module load 2024r1 cmake openmpi ninja
+# module load 2024r1 cmake openmpi ninja
 
 # Check for --hdf5 flag
 if [[ "$1" == "--hdf5" ]] || [[ "$POISSON_HDF5" == "1" ]]; then

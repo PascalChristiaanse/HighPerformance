@@ -24,8 +24,17 @@ option(POISSON_ENABLE_HDF5 "Enable HDF5+XDMF output" OFF)
 find_package(MPI REQUIRED COMPONENTS C CXX)
 
 if(POISSON_ENABLE_HDF5)
-    # HDF5 with MPI support needs MPI to be found first with C component
+    # Find parallel HDF5 (requires MPI)
+    set(HDF5_PREFER_PARALLEL TRUE)
     find_package(HDF5 REQUIRED COMPONENTS C)
+    
+    # Check if HDF5 is parallel
+    if(HDF5_IS_PARALLEL)
+        message(STATUS "Found parallel HDF5")
+    else()
+        message(WARNING "HDF5 found but not parallel! Install libhdf5-openmpi-dev for parallel I/O")
+    endif()
+    
     add_compile_definitions(POISSON_HAS_HDF5)
 endif()
 
@@ -85,6 +94,15 @@ target_link_libraries(PAR_Poisson PRIVATE
     poisson_io
     poisson_mpi
     m
+)
+
+# ============== Run Targets ==============
+# Custom target to run with 8 MPI processes
+add_custom_target(run-8 
+    COMMAND mpirun -np 8 $<TARGET_FILE:PAR_Poisson>
+    DEPENDS PAR_Poisson
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    COMMENT "Running PAR_Poisson with 8 MPI processes"
 )
 
 # ============== Summary ==============

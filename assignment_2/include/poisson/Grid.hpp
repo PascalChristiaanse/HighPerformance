@@ -81,6 +81,12 @@ namespace poisson
         /// Apply a source point (normalized coordinates)
         void applySource(double normX, double normY, double value);
 
+        /// Set subdomain offset for parallel I/O
+        void setSubdomainOffset(std::array<int, 2> offset) { subdomainOffset_ = offset; }
+
+        /// Get subdomain offset for parallel I/O
+        [[nodiscard]] const std::array<int, 2> &subdomainOffset() const noexcept { return subdomainOffset_; }
+
     private:
         /// Convert 2D index to 1D index
         [[nodiscard]] std::size_t index(int x, int y) const noexcept;
@@ -89,6 +95,7 @@ namespace poisson
         int ghostLayers_;                   ///< Number of ghost layers
         std::unique_ptr<double[]> phiData_; ///< Solution values
         std::unique_ptr<int[]> sourceData_; ///< Source mask (1 = fixed source)
+        std::array<int, 2> subdomainOffset_{0, 0}; ///< Offset in global grid for parallel I/O
     };
 
 } // namespace poisson

@@ -67,6 +67,14 @@ namespace poisson
         void setProgressCallback(ProgressCallback callback);
 
     private:
+        /// Calculate subdomain dimensions based on MPI Cartesian topology
+        /// @return {nx, ny} subdomain interior dimensions for this rank
+        [[nodiscard]] std::array<int, 2> calculateSubdomainDims() const;
+
+        /// Calculate subdomain offset in global grid
+        /// @return {offsetX, offsetY} starting position in global grid
+        [[nodiscard]] std::array<int, 2> calculateSubdomainOffset() const;
+
         /// Perform one red-black Gauss-Seidel step
         /// @param parity 0 for red, 1 for black
         /// @return Maximum local residual
@@ -82,8 +90,10 @@ namespace poisson
         void initializeGrid();
 
         Config config_;
-        Grid grid_;
         std::shared_ptr<MPIContext> mpi_;
+        std::array<int, 2> subdomainDims_; ///< Local subdomain dimensions (interior only)
+        std::array<int, 2> subdomainOffset_; ///< Starting position in global grid
+        Grid grid_;  // Must be declared after subdomainDims_ for proper initialization order
         ProgressCallback progressCallback_;
     };
 

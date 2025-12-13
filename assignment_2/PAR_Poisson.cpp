@@ -26,10 +26,10 @@ constexpr bool DEBUG_MODE = false;
 struct ProgramOptions
 {
   std::filesystem::path configPath = "input.dat";
-  std::filesystem::path outputPath = "output";
+  std::filesystem::path outputPath = "/home/pascal/Documents/HighPerformance/assignment_2/output/solution";
   bool useHDF5 = false;
   bool recordIterations = false;
-  int saveInterval = 100; // Save every N iterations
+  int saveInterval = 20; // Save every iteration
 };
 
 void printUsage(const char *progName)
@@ -105,13 +105,15 @@ int main(int argc, char **argv)
   using namespace poisson;
 
   // Initialize MPI
-  MPIContext mpi(argc, argv);
+  auto mpi = std::make_shared<poisson::MPIContext>(argc, argv);
+  mpi->createCartesian({0, 0}, {false, false}); // Let MPI decide decomposition. non periodic boundaries
+
 
   try
   {
     // Parse command line options
     auto opts = parseArgs(argc, argv);
-
+    printf("Process %d/%d starting...\n", mpi->rank(), mpi->size());
     // Determine input file path
     std::filesystem::path configPath = opts.configPath;
     if (!std::filesystem::exists(configPath))
@@ -127,10 +129,10 @@ int main(int argc, char **argv)
     printDebug("Loading config from: " + configPath.string());
 
     // Load configuration
-    auto config = Config::fromFile(configPath);
-
-    if (mpi.isRoot())
+    Config config;
+    if (mpi->isRoot())
     {
+      config = Config::fromFile(configPath);
       std::cout << "Grid size: " << config.nx() << " x " << config.ny() << std::endl;
       std::cout << "Precision goal: " << config.precisionGoal() << std::endl;
       std::cout << "Max iterations: " << config.maxIterations() << std::endl;
@@ -150,19 +152,25 @@ int main(int argc, char **argv)
       }
     }
 
+    mpi->broadcast(config);
+    printDebug("Config received by rank " + std::to_string(mpi->rank()));
+    printDebug("Config precision goal: " + std::to_string(config.precisionGoal()) + " on rank " + std::to_string(mpi->rank()));
+
     // Create solver (serial for now)
-    Solver solver(config);
+    Solver solver(config, mpi);
+    std::string outputPathPerRank = opts.outputPath.string() + "_rank" + std::to_string(mpi->rank());
 
     // Set up iteration recorder if requested
     std::unique_ptr<io::IterationRecorder> recorder;
     if (opts.recordIterations)
     {
       recorder = std::make_unique<io::IterationRecorder>(
-          config, opts.outputPath, mpi.rank(), mpi.size());
+          config, outputPathPerRank
+      );
 
       if (!recorder->enable(opts.saveInterval))
       {
-        if (mpi.isRoot())
+        if (mpi->isRoot())
         {
           std::cerr << "Warning: Failed to enable iteration recording: "
                     << recorder->lastError() << std::endl;
@@ -182,8 +190,11 @@ int main(int argc, char **argv)
     // Solve with timing
     Timer timer;
     timer.start();
+    
 
     auto result = solver.solve();
+    
+    timer.stop();
 
     // Finalize iteration recording
     if (recorder && recorder->isEnabled())
@@ -191,10 +202,11 @@ int main(int argc, char **argv)
       recorder->finalize();
     }
 
-    timer.stop();
 
     // Print results (only from root in parallel case)
-    if (mpi.isRoot())
+    std::cout << "Rank " << mpi->rank() << " completed solve using " << result.iterations << " iterations, taking " << timer.elapsedSeconds()*1000 << " milliseconds." << std::endl;
+    mpi->barrier(); // Synchronize before printing final results
+    if (mpi->isRoot())
     {
       std::cout << "\n=== Results ===" << std::endl;
       std::cout << "Number of iterations: " << result.iterations << std::endl;
@@ -217,15 +229,21 @@ int main(int argc, char **argv)
 
       if (opts.useHDF5)
       {
-        auto writer = io::FileManager::create(io::OutputFormat::HDF5_XDMF, mpi.rank(), mpi.size());
+        // Use parallel I/O - all ranks write to a single file
+        auto writer = io::FileManager::createParallel(
+            io::OutputFormat::HDF5_XDMF, 
+            mpi->rank(), 
+            mpi->size(), 
+            mpi->cartComm());
+        
         if (!writer->write(solver.grid(), config, opts.outputPath))
         {
-          if (mpi.isRoot())
+          if (mpi->isRoot())
           {
             std::cerr << "Warning: Failed to write HDF5 output: " << writer->lastError() << std::endl;
           }
         }
-        else if (mpi.isRoot())
+        else if (mpi->isRoot())
         {
           std::cout << "Output written to: " << opts.outputPath.string() << ".h5" << std::endl;
         }
@@ -233,20 +251,21 @@ int main(int argc, char **argv)
       else
       {
         auto writer = io::FileManager::create(io::OutputFormat::Ascii);
-        if (!writer->write(solver.grid(), config, opts.outputPath))
+        std::string outputPathPerRank = opts.outputPath.string() + "_rank" + std::to_string(mpi->rank());
+        if (!writer->write(solver.grid(), config, outputPathPerRank))
         {
-          if (mpi.isRoot())
+          if (mpi->isRoot())
           {
             std::cerr << "Warning: Failed to write output: " << writer->lastError() << std::endl;
           }
         }
-        else if (mpi.isRoot())
+        else if (mpi->isRoot())
         {
-          std::cout << "Output written to: " << opts.outputPath.string() << ".txt" << std::endl;
+          std::cout << "Output written to: " << outputPathPerRank << ".txt" << std::endl;
         }
       }
     }
-    else if (mpi.isRoot())
+    else if (mpi->isRoot())
     {
       std::cout << "Output written to: " << opts.outputPath.string() << ".h5 and .xdmf" << std::endl;
     }

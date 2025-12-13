@@ -6,7 +6,9 @@ namespace poisson
 {
 
     Grid::Grid(int nx, int ny, int ghostLayers)
-        : dims_{nx + 2 * ghostLayers, ny + 2 * ghostLayers}, ghostLayers_(ghostLayers), phiData_(std::make_unique<double[]>(totalCells())), sourceData_(std::make_unique<int[]>(totalCells()))
+        : dims_{nx + 2 * ghostLayers, ny + 2 * ghostLayers}, ghostLayers_(ghostLayers), 
+          phiData_(std::make_unique<double[]>(totalCells())), 
+          sourceData_(std::make_unique<int[]>(totalCells()))
     {
         clear();
     }

@@ -21,12 +21,17 @@ namespace io
     // ============== Constructors/Destructor ==============
 
     HDF5Writer::HDF5Writer()
-        : mpiRank_(std::nullopt), mpiSize_(std::nullopt)
+        : mpiRank_(std::nullopt), mpiSize_(std::nullopt), mpiComm_(std::nullopt)
     {
     }
 
     HDF5Writer::HDF5Writer(int mpiRank, int mpiSize)
-        : mpiRank_(mpiRank), mpiSize_(mpiSize)
+        : mpiRank_(mpiRank), mpiSize_(mpiSize), mpiComm_(std::nullopt)
+    {
+    }
+
+    HDF5Writer::HDF5Writer(int mpiRank, int mpiSize, MPI_Comm comm)
+        : mpiRank_(mpiRank), mpiSize_(mpiSize), mpiComm_(comm)
     {
     }
 
@@ -39,7 +44,10 @@ namespace io
     }
 
     HDF5Writer::HDF5Writer(HDF5Writer &&other) noexcept
-        : mpiRank_(other.mpiRank_), mpiSize_(other.mpiSize_), lastError_(std::move(other.lastError_)), timeSeriesPath_(std::move(other.timeSeriesPath_)), timeSeriesConfig_(std::move(other.timeSeriesConfig_)), timeSteps_(std::move(other.timeSteps_)), residuals_(std::move(other.residuals_)), timeSeriesOpen_(other.timeSeriesOpen_)
+        : mpiRank_(other.mpiRank_), mpiSize_(other.mpiSize_), mpiComm_(other.mpiComm_),
+          lastError_(std::move(other.lastError_)), timeSeriesPath_(std::move(other.timeSeriesPath_)), 
+          timeSeriesConfig_(std::move(other.timeSeriesConfig_)), timeSteps_(std::move(other.timeSteps_)), 
+          residuals_(std::move(other.residuals_)), timeSeriesOpen_(other.timeSeriesOpen_)
 #ifdef POISSON_HAS_HDF5
           ,
           fileId_(other.fileId_)
@@ -62,6 +70,7 @@ namespace io
 
             mpiRank_ = other.mpiRank_;
             mpiSize_ = other.mpiSize_;
+            mpiComm_ = other.mpiComm_;
             lastError_ = std::move(other.lastError_);
             timeSeriesPath_ = std::move(other.timeSeriesPath_);
             timeSeriesConfig_ = std::move(other.timeSeriesConfig_);
@@ -89,8 +98,22 @@ namespace io
         auto h5Path = basePath;
         h5Path.replace_extension(".h5");
 
-        // Create file
-        hid_t fileId = H5Fcreate(h5Path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+        hid_t fileId;
+        hid_t plistId = H5P_DEFAULT;
+
+        // Use parallel I/O if MPI communicator is available
+        if (mpiComm_.has_value())
+        {
+            plistId = H5Pcreate(H5P_FILE_ACCESS);
+            H5Pset_fapl_mpio(plistId, mpiComm_.value(), MPI_INFO_NULL);
+            fileId = H5Fcreate(h5Path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, plistId);
+            H5Pclose(plistId);
+        }
+        else
+        {
+            fileId = H5Fcreate(h5Path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+        }
+
         if (fileId < 0)
         {
             lastError_ = "Failed to create HDF5 file: " + h5Path.string();
@@ -106,50 +129,89 @@ namespace io
             return false;
         }
 
-        // Write phi dataset
-        const int nx = grid.interiorDimX();
-        const int ny = grid.interiorDimY();
-        hsize_t dims[2] = {static_cast<hsize_t>(nx), static_cast<hsize_t>(ny)};
+        // Local interior dimensions
+        const int localNx = grid.interiorDimX();
+        const int localNy = grid.interiorDimY();
 
-        hid_t dataspace = H5Screate_simple(2, dims, nullptr);
-        hid_t dataset = H5Dcreate2(dataGroup, "phi", H5T_NATIVE_DOUBLE, dataspace,
+        // Global dimensions from config (for parallel) or local (for serial)
+        const int globalNx = config.nx();
+        const int globalNy = config.ny();
+        hsize_t globalDims[2] = {static_cast<hsize_t>(globalNx), static_cast<hsize_t>(globalNy)};
+
+        // Create dataspace for full global grid
+        hid_t filespace = H5Screate_simple(2, globalDims, nullptr);
+        hid_t dataset = H5Dcreate2(dataGroup, "phi", H5T_NATIVE_DOUBLE, filespace,
                                    H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
 
         // Copy interior data to contiguous buffer
-        std::vector<double> buffer(nx * ny);
+        std::vector<double> buffer(localNx * localNy);
         const int ghost = grid.ghostLayers();
-        for (int x = 0; x < nx; ++x)
+        for (int x = 0; x < localNx; ++x)
         {
-            for (int y = 0; y < ny; ++y)
+            for (int y = 0; y < localNy; ++y)
             {
-                buffer[x * ny + y] = grid.phi(x + ghost, y + ghost);
+                buffer[x * localNy + y] = grid.phi(x + ghost, y + ghost);
             }
         }
 
-        H5Dwrite(dataset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, buffer.data());
+        if (mpiComm_.has_value())
+        {
+            // Parallel I/O: each rank writes its subdomain to the correct position
+            const auto &offset = grid.subdomainOffset();
+            hsize_t localDims[2] = {static_cast<hsize_t>(localNx), static_cast<hsize_t>(localNy)};
+            hsize_t offsetArr[2] = {static_cast<hsize_t>(offset[0]), static_cast<hsize_t>(offset[1])};
 
-        // Add attributes
-        hsize_t attrDims[1] = {1};
-        hid_t attrSpace = H5Screate_simple(1, attrDims, nullptr);
+            // Select hyperslab in file for this rank's data
+            H5Sselect_hyperslab(filespace, H5S_SELECT_SET, offsetArr, nullptr, localDims, nullptr);
 
-        int nxAttr = config.nx();
-        hid_t nxAttrId = H5Acreate2(dataset, "nx", H5T_NATIVE_INT, attrSpace, H5P_DEFAULT, H5P_DEFAULT);
-        H5Awrite(nxAttrId, H5T_NATIVE_INT, &nxAttr);
-        H5Aclose(nxAttrId);
+            // Create memory dataspace for local data
+            hid_t memspace = H5Screate_simple(2, localDims, nullptr);
 
-        int nyAttr = config.ny();
-        hid_t nyAttrId = H5Acreate2(dataset, "ny", H5T_NATIVE_INT, attrSpace, H5P_DEFAULT, H5P_DEFAULT);
-        H5Awrite(nyAttrId, H5T_NATIVE_INT, &nyAttr);
-        H5Aclose(nyAttrId);
+            // Use collective write
+            hid_t dxpl = H5Pcreate(H5P_DATASET_XFER);
+            H5Pset_dxpl_mpio(dxpl, H5FD_MPIO_COLLECTIVE);
 
-        H5Sclose(attrSpace);
+            H5Dwrite(dataset, H5T_NATIVE_DOUBLE, memspace, filespace, dxpl, buffer.data());
+
+            H5Pclose(dxpl);
+            H5Sclose(memspace);
+        }
+        else
+        {
+            // Serial I/O: write all data
+            H5Dwrite(dataset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, buffer.data());
+        }
+
+        // Add attributes - all ranks must participate in parallel HDF5
+        // but only rank 0 actually writes the data
+        {
+            hsize_t attrDims[1] = {1};
+            hid_t attrSpace = H5Screate_simple(1, attrDims, nullptr);
+
+            int nxAttr = config.nx();
+            hid_t nxAttrId = H5Acreate2(dataset, "nx", H5T_NATIVE_INT, attrSpace, H5P_DEFAULT, H5P_DEFAULT);
+            H5Awrite(nxAttrId, H5T_NATIVE_INT, &nxAttr);
+            H5Aclose(nxAttrId);
+
+            int nyAttr = config.ny();
+            hid_t nyAttrId = H5Acreate2(dataset, "ny", H5T_NATIVE_INT, attrSpace, H5P_DEFAULT, H5P_DEFAULT);
+            H5Awrite(nyAttrId, H5T_NATIVE_INT, &nyAttr);
+            H5Aclose(nyAttrId);
+
+            H5Sclose(attrSpace);
+        }
+
         H5Dclose(dataset);
-        H5Sclose(dataspace);
+        H5Sclose(filespace);
         H5Gclose(dataGroup);
         H5Fclose(fileId);
 
-        // Write XDMF companion file
-        return writeXDMF(basePath, config, {});
+        // Write XDMF companion file (only rank 0 or serial)
+        if (!mpiRank_.has_value() || mpiRank_.value() == 0)
+        {
+            return writeXDMF(basePath, config, {});
+        }
+        return true;
 
 #else
         (void)grid;

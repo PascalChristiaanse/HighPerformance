@@ -35,4 +35,23 @@ namespace io
         return std::make_unique<AsciiWriter>();
     }
 
+    std::unique_ptr<FileManager> FileManager::createParallel(
+        OutputFormat format,
+        int mpiRank,
+        int mpiSize,
+        MPI_Comm comm)
+    {
+        switch (format)
+        {
+        case OutputFormat::Ascii:
+            // ASCII doesn't support parallel I/O, fall back to per-rank files
+            return std::make_unique<AsciiWriter>(mpiRank);
+
+        case OutputFormat::HDF5_XDMF:
+            return std::make_unique<HDF5Writer>(mpiRank, mpiSize, comm);
+        }
+
+        return std::make_unique<AsciiWriter>();
+    }
+
 } // namespace io

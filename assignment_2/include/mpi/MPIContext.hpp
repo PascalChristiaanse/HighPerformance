@@ -5,6 +5,9 @@
 #include <vector>
 #include <stdexcept>
 
+#include "poisson/Config.hpp"
+#include "poisson/Grid.hpp"
+
 namespace poisson
 {
 
@@ -100,6 +103,36 @@ namespace poisson
                      double *recvBuf, const int *recvCounts,
                      const int *displs) const;
 
+
+        // Broadcast data from root to all processes
+        /// @param buffer Data buffer
+        /// @param count Number of elements
+        void broadcast(double *buffer, int count) const;
+        void broadcast(int *buffer, int count) const;
+        void broadcast(char *buffer, int count) const;
+        void broadcast(std::string &str) const;
+        void broadcast(std::vector<double> &vec) const;
+        void broadcast(std::vector<int> &vec) const;
+        void broadcast(std::vector<char> &vec) const;
+        void broadcast(std::vector<std::string> &vec) const;
+
+        // Broadcast Config
+        /// @param config Configuration object
+        void broadcast(poisson::Config &config) const;
+
+        // ============== Boundary Exchange ==============
+
+        /// Create MPI datatypes for boundary exchange on a grid
+        /// @param grid The grid to create datatypes for
+        void createBorderTypes(const Grid &grid);
+
+        /// Free MPI datatypes for boundary exchange
+        void freeBorderTypes();
+
+        /// Exchange boundary data with neighbors
+        /// @param grid The grid to exchange boundaries for
+        void exchangeBoundaries(Grid &grid) const;
+
         // ============== Timing ==============
 
         /// Get wall-clock time (with barrier for synchronization)
@@ -115,6 +148,11 @@ namespace poisson
         std::array<int, 4> neighbors_{{MPI_PROC_NULL, MPI_PROC_NULL,
                                        MPI_PROC_NULL, MPI_PROC_NULL}};
         bool initialized_{false};
+
+        // MPI datatypes for boundary exchange
+        MPI_Datatype borderTypeX_{MPI_DATATYPE_NULL};  // For X-direction (rows - contiguous)
+        MPI_Datatype borderTypeY_{MPI_DATATYPE_NULL};  // For Y-direction (columns - strided)
+        bool borderTypesCreated_{false};
     };
 
 } // namespace poisson

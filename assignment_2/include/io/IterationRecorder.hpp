@@ -34,13 +34,13 @@ namespace io
         /// @brief Construct a recorder (disabled by default)
         /// @param config Solver configuration (for grid dimensions in output)
         /// @param basePath Base path for output files (will create .h5 and .xdmf)
-        /// @param mpiRank MPI rank (optional, for parallel recording)
-        /// @param mpiSize MPI size (optional)
+        // // @param mpiRank MPI rank (optional, for parallel recording)
+        // / @param mpiSize MPI size (optional)
         IterationRecorder(
             const poisson::Config &config,
-            const std::filesystem::path &basePath,
-            int mpiRank = 0,
-            int mpiSize = 1);
+            const std::filesystem::path &basePath);
+            // int mpiRank = 0,
+            // int mpiSize = 1);
 
         /// @brief Destructor - ensures files are closed
         ~IterationRecorder();
@@ -94,8 +94,8 @@ namespace io
     private:
         poisson::Config config_;
         std::filesystem::path basePath_;
-        int mpiRank_;
-        int mpiSize_;
+        // int mpiRank_;
+        // int mpiSize_;
 
         bool enabled_ = false;
         int saveInterval_ = 1;

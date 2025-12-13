@@ -110,14 +110,16 @@
             "preLaunchTask": "CMake: build"
         },
         {
-            "name": "Debug PAR_Poisson with MPI (4 processes)",
+            "name": "Debug PAR_Poisson: 4 processes, HDF5, record every 100 iterations",
             "type": "cppdbg",
             "request": "launch",
             "program": "/usr/bin/mpirun",
             "args": [
                 "-np",
-                "4",
+                "8",
+                "--use-hwthread-cpus",
                 "${workspaceFolder}/build/debug-mpicxx-ninja/PAR_Poisson",
+                // "--hdf5",
                 "input.dat"
             ],
             "stopAtEntry": false,
