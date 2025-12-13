@@ -241,21 +241,38 @@ namespace poisson
 
     void MPIContext::broadcast(poisson::Config &config) const
     {
+        MPI_Comm comm = cartComm_ != MPI_COMM_NULL ? cartComm_ : comm_;
+        
         // Broadcast grid dimensions
         int nx = config.nx();
         int ny = config.ny();
-        MPI_Bcast(&nx, 1, MPI_INT, 0, cartComm_ != MPI_COMM_NULL ? cartComm_ : comm_);
-        MPI_Bcast(&ny, 1, MPI_INT, 0, cartComm_ != MPI_COMM_NULL ? cartComm_ : comm_);
+        MPI_Bcast(&nx, 1, MPI_INT, 0, comm);
+        MPI_Bcast(&ny, 1, MPI_INT, 0, comm);
 
-        // Broadcast solver parameters
+        // Broadcast basic solver parameters
         double precisionGoal = config.precisionGoal();
         int maxIterations = config.maxIterations();
-        MPI_Bcast(&precisionGoal, 1, MPI_DOUBLE, 0, cartComm_ != MPI_COMM_NULL ? cartComm_ : comm_);
-        MPI_Bcast(&maxIterations, 1, MPI_INT, 0, cartComm_ != MPI_COMM_NULL ? cartComm_ : comm_);
+        MPI_Bcast(&precisionGoal, 1, MPI_DOUBLE, 0, comm);
+        MPI_Bcast(&maxIterations, 1, MPI_INT, 0, comm);
+
+        // Broadcast new solver options (exercises 1.2.x)
+        int solverMethod = static_cast<int>(config.solverMethod());
+        double omega = config.omega();
+        int errorCheckInterval = config.errorCheckInterval();
+        int sweepsPerExchange = config.sweepsPerExchange();
+        int useOptimizedLoop = config.useOptimizedLoop() ? 1 : 0;
+        int verboseTiming = config.verboseTiming() ? 1 : 0;
+        
+        MPI_Bcast(&solverMethod, 1, MPI_INT, 0, comm);
+        MPI_Bcast(&omega, 1, MPI_DOUBLE, 0, comm);
+        MPI_Bcast(&errorCheckInterval, 1, MPI_INT, 0, comm);
+        MPI_Bcast(&sweepsPerExchange, 1, MPI_INT, 0, comm);
+        MPI_Bcast(&useOptimizedLoop, 1, MPI_INT, 0, comm);
+        MPI_Bcast(&verboseTiming, 1, MPI_INT, 0, comm);
 
         // Broadcast number of sources
         int numSources = static_cast<int>(config.sources().size());
-        MPI_Bcast(&numSources, 1, MPI_INT, 0, cartComm_ != MPI_COMM_NULL ? cartComm_ : comm_);
+        MPI_Bcast(&numSources, 1, MPI_INT, 0, comm);
 
         // Broadcast source data
         std::vector<double> sourceData;
@@ -278,8 +295,7 @@ namespace poisson
         // Broadcast the packed source data
         if (numSources > 0)
         {
-            MPI_Bcast(sourceData.data(), numSources * 3, MPI_DOUBLE,
-                      0, cartComm_ != MPI_COMM_NULL ? cartComm_ : comm_);
+            MPI_Bcast(sourceData.data(), numSources * 3, MPI_DOUBLE, 0, comm);
         }
 
         // Reconstruct config on non-root processes
@@ -288,6 +304,14 @@ namespace poisson
             config.setGridSize(nx, ny);
             config.setPrecisionGoal(precisionGoal);
             config.setMaxIterations(maxIterations);
+            
+            // New solver options
+            config.setSolverMethod(static_cast<poisson::SolverMethod>(solverMethod));
+            config.setOmega(omega);
+            config.setErrorCheckInterval(errorCheckInterval);
+            config.setSweepsPerExchange(sweepsPerExchange);
+            config.setUseOptimizedLoop(useOptimizedLoop != 0);
+            config.setVerboseTiming(verboseTiming != 0);
 
             // Unpack and add sources
             for (int i = 0; i < numSources; ++i)

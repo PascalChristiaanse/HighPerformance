@@ -1,6 +1,8 @@
 #include "poisson/Config.hpp"
 #include <fstream>
 #include <sstream>
+#include <algorithm>
+#include <cctype>
 
 namespace poisson
 {
@@ -91,6 +93,85 @@ namespace poisson
     {
         sources_.push_back({x, y, value});
         return *this;
+    }
+
+    Config &Config::setSolverMethod(SolverMethod method)
+    {
+        solverMethod_ = method;
+        return *this;
+    }
+
+    Config &Config::setOmega(double omega)
+    {
+        omega_ = omega;
+        return *this;
+    }
+
+    Config &Config::setErrorCheckInterval(int interval)
+    {
+        errorCheckInterval_ = interval;
+        return *this;
+    }
+
+    Config &Config::setSweepsPerExchange(int sweeps)
+    {
+        sweepsPerExchange_ = sweeps;
+        return *this;
+    }
+
+    Config &Config::setUseOptimizedLoop(bool useOptimized)
+    {
+        useOptimizedLoop_ = useOptimized;
+        return *this;
+    }
+
+    Config &Config::setVerboseTiming(bool verbose)
+    {
+        verboseTiming_ = verbose;
+        return *this;
+    }
+
+    Config &Config::setTimingOutputPath(const std::filesystem::path &path)
+    {
+        timingOutputPath_ = path;
+        return *this;
+    }
+
+    SolverMethod Config::parseMethod(const std::string &str)
+    {
+        std::string lower = str;
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+
+        if (lower == "gs" || lower == "gauss-seidel" || lower == "gaussseidel")
+        {
+            return SolverMethod::GaussSeidel;
+        }
+        else if (lower == "sor")
+        {
+            return SolverMethod::SOR;
+        }
+        else if (lower == "cg" || lower == "conjugate-gradient" || lower == "conjugategradient")
+        {
+            return SolverMethod::CG;
+        }
+        throw std::invalid_argument("Unknown solver method: " + str +
+                                    ". Valid options: gs, sor, cg");
+    }
+
+    std::string Config::methodToString(SolverMethod method)
+    {
+        switch (method)
+        {
+        case SolverMethod::GaussSeidel:
+            return "Gauss-Seidel";
+        case SolverMethod::SOR:
+            return "SOR";
+        case SolverMethod::CG:
+            return "Conjugate-Gradient";
+        default:
+            return "Unknown";
+        }
     }
 
 } // namespace poisson

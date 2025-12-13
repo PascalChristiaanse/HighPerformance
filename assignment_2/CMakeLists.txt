@@ -43,6 +43,7 @@ add_library(poisson_core STATIC
     src/poisson/Config.cpp
     src/poisson/Grid.cpp
     src/poisson/Solver.cpp
+    src/poisson/SolverStrategies.cpp
     src/poisson/Timer.cpp
 )
 

@@ -116,7 +116,7 @@
             "program": "/usr/bin/mpirun",
             "args": [
                 "-np",
-                "8",
+                "4",
                 "--use-hwthread-cpus",
                 "${workspaceFolder}/build/debug-mpicxx-ninja/PAR_Poisson",
                 // "--hdf5",

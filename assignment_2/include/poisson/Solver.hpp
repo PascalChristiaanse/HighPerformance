@@ -2,6 +2,8 @@
 
 #include "poisson/Config.hpp"
 #include "poisson/Grid.hpp"
+#include "poisson/Telemetry.hpp"
+#include "poisson/SolverStrategy.hpp"
 #include <memory>
 #include <functional>
 #include <optional>
@@ -20,9 +22,12 @@ namespace poisson
         double finalResidual; ///< Final maximum residual
         double elapsedTime;   ///< Time taken in seconds
         bool converged;       ///< Whether the solver converged
+
+        // Detailed telemetry (optional, populated when verbose timing is enabled)
+        std::shared_ptr<SolveTelemetry> telemetry;
     };
 
-    /// Poisson equation solver using red-black Gauss-Seidel method
+    /// Poisson equation solver using pluggable strategy pattern
     class Solver
     {
     public:
@@ -59,6 +64,12 @@ namespace poisson
         /// Get the configuration
         [[nodiscard]] const Config &config() const noexcept;
 
+        /// Get the MPI context
+        [[nodiscard]] std::shared_ptr<MPIContext> mpi() const noexcept { return mpi_; }
+
+        /// Get subdomain offset
+        [[nodiscard]] const std::array<int, 2> &subdomainOffset() const noexcept { return subdomainOffset_; }
+
         /// Progress callback type: (iteration, residual, grid)
         /// Grid is const reference - use for recording/monitoring only
         using ProgressCallback = std::function<void(int, double, const Grid &)>;
@@ -75,11 +86,6 @@ namespace poisson
         /// @return {offsetX, offsetY} starting position in global grid
         [[nodiscard]] std::array<int, 2> calculateSubdomainOffset() const;
 
-        /// Perform one red-black Gauss-Seidel step
-        /// @param parity 0 for red, 1 for black
-        /// @return Maximum local residual
-        [[nodiscard]] double doStep(int parity);
-
         /// Exchange boundary data with neighbors (MPI)
         void exchangeBoundaries();
 
@@ -95,6 +101,7 @@ namespace poisson
         std::array<int, 2> subdomainOffset_; ///< Starting position in global grid
         Grid grid_;  // Must be declared after subdomainDims_ for proper initialization order
         ProgressCallback progressCallback_;
+        std::unique_ptr<SolverStrategy> strategy_; ///< Solver strategy (GS, SOR, CG)
     };
 
 } // namespace poisson

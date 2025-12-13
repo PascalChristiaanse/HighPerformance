@@ -3,11 +3,13 @@
  * Parallel 2D Poisson equation solver using MPI
  *
  * Refactored OOP version using modern C++17
+ * Supports multiple solver methods: Gauss-Seidel, SOR, Conjugate Gradient
  */
 
 #include "poisson/Solver.hpp"
 #include "poisson/Config.hpp"
 #include "poisson/Timer.hpp"
+#include "poisson/Telemetry.hpp"
 #include "io/FileManager.hpp"
 #include "io/AsciiWriter.hpp"
 #include "io/HDF5Writer.hpp"
@@ -27,24 +29,66 @@ struct ProgramOptions
 {
   std::filesystem::path configPath = "input.dat";
   std::filesystem::path outputPath = "/home/pascal/Documents/HighPerformance/assignment_2/output/solution";
-  bool useHDF5 = false;
+  bool useHDF5 = true;
   bool recordIterations = false;
-  int saveInterval = 20; // Save every iteration
+  int saveInterval = 20;
+
+  // Solver options (exercises 1.2.x)
+  std::string solverMethod = "sor";           // gs, sor, cg
+  double omega = 1.8;                        // SOR relaxation parameter
+  int errorCheckInterval = 1;                // Check convergence every N iterations
+  int sweepsPerExchange = 1;                 // Sweeps between border exchanges
+  bool optimizedLoop = false;                // Use stride-2 loop optimization
+
+  // Telemetry options
+  bool verboseTiming = false;                // Print detailed timing summary
+  std::filesystem::path timingOutputPath;    // CSV output path for timing data
+  
+  // Grid size override (for easy benchmarking)
+  int gridNx = 100;                           // Override grid X size (-1 = use config file)
+  int gridNy = 100;                           // Override grid Y size (-1 = use config file)
+  int maxIterations = 100000;                    // Override max iterations (-1 = use config file)
 };
 
 void printUsage(const char *progName)
 {
   std::cout << "Usage: " << progName << " [options] [config_file]\n"
-            << "\nOptions:\n"
+            << "\nOutput Options:\n"
             << "  -h, --help              Show this help message\n"
-            << "  -o, --output PATH       Output file base path (default: output)\n"
+            << "  -o, --output PATH       Output file base path (default: output/solution)\n"
             << "  --hdf5                  Use HDF5 output format (requires HDF5 support)\n"
             << "  --record-iterations     Record intermediate iterations (implies --hdf5)\n"
-            << "  --save-interval N       Save every N iterations (default: 100)\n"
+            << "  --save-interval N       Save every N iterations (default: 20)\n"
+            << "\nSolver Options (for exercises 1.2.x):\n"
+            << "  --solver METHOD         Solver method: gs (Gauss-Seidel), sor, cg (default: gs)\n"
+            << "  --omega VALUE           SOR relaxation parameter (default: 1.0, typical: 1.90-1.99)\n"
+            << "  --error-check-interval N  Check convergence every N iterations (default: 1)\n"
+            << "  --sweeps-per-exchange N Number of sweeps between border exchanges (default: 1)\n"
+            << "  --optimized-loop        Use stride-2 loop optimization (exercise 1.2.9)\n"
+            << "\nGrid Override Options (for easy benchmarking):\n"
+            << "  --nx N                  Override grid X size\n"
+            << "  --ny N                  Override grid Y size\n"
+            << "  --grid-size N           Set both nx and ny to N\n"
+            << "  --max-iter N            Override maximum iterations\n"
+            << "\nTelemetry Options:\n"
+            << "  --verbose-timing        Print detailed timing summary\n"
+            << "  --timing-output PATH    Write per-iteration timing data to CSV file\n"
             << "\nExamples:\n"
+            << "  # Basic run with Gauss-Seidel\n"
             << "  " << progName << " input.dat\n"
-            << "  " << progName << " --hdf5 -o solution input.dat\n"
-            << "  " << progName << " --record-iterations --save-interval 50 input.dat\n";
+            << "\n  # Exercise 1.2.1-1.2.2: SOR with omega sweep\n"
+            << "  " << progName << " --solver sor --omega 1.95 --verbose-timing input.dat\n"
+            << "\n  # Exercise 1.2.3: Fixed iterations timing study\n"
+            << "  " << progName << " --solver sor --omega 1.95 --grid-size 400 --max-iter 100 \\\n"
+            << "                    --timing-output timing_400.csv input.dat\n"
+            << "\n  # Exercise 1.2.7: Reduced error checking\n"
+            << "  " << progName << " --solver sor --omega 1.95 --error-check-interval 10 input.dat\n"
+            << "\n  # Exercise 1.2.8: Multiple sweeps per exchange\n"
+            << "  " << progName << " --solver sor --omega 1.95 --sweeps-per-exchange 3 input.dat\n"
+            << "\n  # Exercise 1.2.9: Optimized loop\n"
+            << "  " << progName << " --solver sor --omega 1.95 --optimized-loop input.dat\n"
+            << "\n  # Exercise 1.2.13: Conjugate Gradient\n"
+            << "  " << progName << " --solver cg --verbose-timing input.dat\n";
 }
 
 ProgramOptions parseArgs(int argc, char **argv)
@@ -74,13 +118,89 @@ ProgramOptions parseArgs(int argc, char **argv)
     else if (arg == "--record-iterations")
     {
       opts.recordIterations = true;
-      opts.useHDF5 = true; // Iteration recording requires HDF5
+      opts.useHDF5 = true;
     }
     else if (arg == "--save-interval")
     {
       if (i + 1 < argc)
       {
         opts.saveInterval = std::stoi(argv[++i]);
+      }
+    }
+    // Solver options
+    else if (arg == "--solver")
+    {
+      if (i + 1 < argc)
+      {
+        opts.solverMethod = argv[++i];
+      }
+    }
+    else if (arg == "--omega")
+    {
+      if (i + 1 < argc)
+      {
+        opts.omega = std::stod(argv[++i]);
+      }
+    }
+    else if (arg == "--error-check-interval")
+    {
+      if (i + 1 < argc)
+      {
+        opts.errorCheckInterval = std::stoi(argv[++i]);
+      }
+    }
+    else if (arg == "--sweeps-per-exchange")
+    {
+      if (i + 1 < argc)
+      {
+        opts.sweepsPerExchange = std::stoi(argv[++i]);
+      }
+    }
+    else if (arg == "--optimized-loop")
+    {
+      opts.optimizedLoop = true;
+    }
+    // Grid override options
+    else if (arg == "--nx")
+    {
+      if (i + 1 < argc)
+      {
+        opts.gridNx = std::stoi(argv[++i]);
+      }
+    }
+    else if (arg == "--ny")
+    {
+      if (i + 1 < argc)
+      {
+        opts.gridNy = std::stoi(argv[++i]);
+      }
+    }
+    else if (arg == "--grid-size")
+    {
+      if (i + 1 < argc)
+      {
+        int size = std::stoi(argv[++i]);
+        opts.gridNx = size;
+        opts.gridNy = size;
+      }
+    }
+    else if (arg == "--max-iter")
+    {
+      if (i + 1 < argc)
+      {
+        opts.maxIterations = std::stoi(argv[++i]);
+      }
+    }
+    // Telemetry options
+    else if (arg == "--verbose-timing")
+    {
+      opts.verboseTiming = true;
+    }
+    else if (arg == "--timing-output")
+    {
+      if (i + 1 < argc)
+      {
+        opts.timingOutputPath = argv[++i];
       }
     }
     else if (arg[0] != '-')
@@ -106,7 +226,7 @@ int main(int argc, char **argv)
 
   // Initialize MPI
   auto mpi = std::make_shared<poisson::MPIContext>(argc, argv);
-  mpi->createCartesian({0, 0}, {false, false}); // Let MPI decide decomposition. non periodic boundaries
+  mpi->createCartesian({4, 1}, {false, false}); // Let MPI decide decomposition. non periodic boundaries
 
 
   try
@@ -133,10 +253,52 @@ int main(int argc, char **argv)
     if (mpi->isRoot())
     {
       config = Config::fromFile(configPath);
+      
+      // Apply command-line overrides
+      if (opts.gridNx > 0 && opts.gridNy > 0)
+      {
+        config.setGridSize(opts.gridNx, opts.gridNy);
+      }
+      else if (opts.gridNx > 0)
+      {
+        config.setGridSize(opts.gridNx, config.ny());
+      }
+      else if (opts.gridNy > 0)
+      {
+        config.setGridSize(config.nx(), opts.gridNy);
+      }
+      
+      if (opts.maxIterations > 0)
+      {
+        config.setMaxIterations(opts.maxIterations);
+      }
+      
+      // Apply solver options
+      config.setSolverMethod(Config::parseMethod(opts.solverMethod))
+            .setOmega(opts.omega)
+            .setErrorCheckInterval(opts.errorCheckInterval)
+            .setSweepsPerExchange(opts.sweepsPerExchange)
+            .setUseOptimizedLoop(opts.optimizedLoop)
+            .setVerboseTiming(opts.verboseTiming)
+            .setTimingOutputPath(opts.timingOutputPath);
+
+      std::cout << "\n=== Configuration ===" << std::endl;
       std::cout << "Grid size: " << config.nx() << " x " << config.ny() << std::endl;
       std::cout << "Precision goal: " << config.precisionGoal() << std::endl;
       std::cout << "Max iterations: " << config.maxIterations() << std::endl;
       std::cout << "Source points: " << config.sources().size() << std::endl;
+      std::cout << "Solver method: " << Config::methodToString(config.solverMethod()) << std::endl;
+      
+      if (config.solverMethod() == SolverMethod::SOR)
+      {
+        std::cout << "Omega (ω): " << config.omega() << std::endl;
+      }
+      
+      std::cout << "Error check interval: " << config.errorCheckInterval() << std::endl;
+      std::cout << "Sweeps per exchange: " << config.sweepsPerExchange() << std::endl;
+      std::cout << "Optimized loop: " << (config.useOptimizedLoop() ? "yes" : "no") << std::endl;
+      std::cout << "Processor topology: " << mpi->size() << " = " 
+                << mpi->cartDims()[0] << " x " << mpi->cartDims()[1] << std::endl;
 
       if (opts.useHDF5)
       {
@@ -219,6 +381,30 @@ int main(int argc, char **argv)
       if (recorder && recorder->isEnabled())
       {
         std::cout << "Iterations recorded: " << recorder->recordedCount() << std::endl;
+      }
+
+      // Print verbose timing summary if requested
+      if (opts.verboseTiming && result.telemetry)
+      {
+        result.telemetry->printSummary(std::cout,
+                                       config.nx(), config.ny(),
+                                       mpi->size(),
+                                       mpi->cartDims()[0], mpi->cartDims()[1],
+                                       Config::methodToString(config.solverMethod()),
+                                       config.omega());
+      }
+
+      // Write timing CSV if requested
+      if (!opts.timingOutputPath.empty() && result.telemetry)
+      {
+        if (result.telemetry->writeCSV(opts.timingOutputPath))
+        {
+          std::cout << "Timing data written to: " << opts.timingOutputPath << std::endl;
+        }
+        else
+        {
+          std::cerr << "Warning: Failed to write timing CSV to " << opts.timingOutputPath << std::endl;
+        }
       }
     }
 

@@ -1,5 +1,6 @@
 #include "poisson/Solver.hpp"
 #include "poisson/Timer.hpp"
+#include "poisson/SolverStrategies.hpp"
 #include "mpi/MPIContext.hpp"
 #include <cmath>
 #include <algorithm>
@@ -62,7 +63,14 @@ namespace poisson
         : config_(config), grid_(config.nx(), config.ny()), mpi_(nullptr),
           subdomainDims_({config.nx(), config.ny()}), subdomainOffset_({0, 0})
     {
+        // Create solver strategy based on config
+        strategy_ = SolverStrategyFactory::create(
+            static_cast<SolverStrategyFactory::Method>(config_.solverMethod()),
+            config_.omega(),
+            config_.useOptimizedLoop());
+
         initializeGrid();
+        strategy_->initialize(grid_, config_, mpi_, subdomainOffset_);
     }
 
     Solver::Solver(const Config &config, std::shared_ptr<MPIContext> mpi)
@@ -82,8 +90,15 @@ namespace poisson
         
         // Create MPI datatypes for boundary exchange
         mpi_->createBorderTypes(grid_);
+
+        // Create solver strategy based on config
+        strategy_ = SolverStrategyFactory::create(
+            static_cast<SolverStrategyFactory::Method>(config_.solverMethod()),
+            config_.omega(),
+            config_.useOptimizedLoop());
         
         initializeGrid();
+        strategy_->initialize(grid_, config_, mpi_, subdomainOffset_);
     }
 
     Solver::~Solver() = default;
@@ -118,26 +133,96 @@ namespace poisson
 
     SolveResult Solver::solve()
     {
-        Timer timer;
-        timer.start();
+        Timer totalTimer;
+        Timer stepTimer;
+        Timer exchangeTimer;
+        Timer reductionTimer;
+
+        // Create telemetry if verbose timing is enabled
+        auto telemetry = std::make_shared<SolveTelemetry>();
+
+        totalTimer.start();
 
         int count = 0;
         double delta = 2.0 * config_.precisionGoal();
+        const int errorCheckInterval = config_.errorCheckInterval();
+        const int sweepsPerExchange = config_.sweepsPerExchange();
+        const bool usesCustomConvergence = strategy_->usesCustomConvergence();
+        const bool singleStepPerIteration = strategy_->isSingleStepPerIteration();
 
         while (delta > config_.precisionGoal() && count < config_.maxIterations())
         {
-            // Red-black Gauss-Seidel
-            double delta1 = doStep(0); // Red cells
-            exchangeBoundaries();
+            IterationTelemetry iterTelemetry;
+            iterTelemetry.iteration = count + 1;
 
-            double delta2 = doStep(1); // Black cells
-            exchangeBoundaries();
+            // Perform sweeps
+            double localMax = 0.0;
+            
+            stepTimer.start();
+            if (singleStepPerIteration)
+            {
+                // CG: single step per iteration (handles its own boundary exchange)
+                localMax = strategy_->doStep(grid_, config_, mpi_, subdomainOffset_);
+            }
+            else
+            {
+                // GS/SOR: red-black sweeps
+                for (int sweep = 0; sweep < sweepsPerExchange; ++sweep)
+                {
+                    // Red step
+                    double delta1 = strategy_->doStep(grid_, config_, mpi_, subdomainOffset_);
+                    
+                    // Black step  
+                    double delta2 = strategy_->doStep(grid_, config_, mpi_, subdomainOffset_);
+                    
+                    localMax = std::max(localMax, std::max(delta1, delta2));
+                }
+            }
+            stepTimer.stop();
+            iterTelemetry.stepTime = stepTimer.elapsedSeconds();
 
-            // Local maximum
-            double localMax = std::max(delta1, delta2);
+            // Exchange boundaries (once per iteration, after all sweeps)
+            // Skip for CG as it handles its own pCG exchange
+            if (!singleStepPerIteration)
+            {
+                exchangeTimer.start();
+                exchangeBoundaries();
+                exchangeTimer.stop();
+                iterTelemetry.exchangeTime = exchangeTimer.elapsedSeconds();
+            }
+            else
+            {
+                iterTelemetry.exchangeTime = 0.0;
+            }
 
-            // Global reduction for parallel case
-            delta = globalMaxResidual(localMax);
+            // Check convergence (potentially less frequently)
+            if ((count + 1) % errorCheckInterval == 0 || count == 0)
+            {
+                reductionTimer.start();
+                if (usesCustomConvergence)
+                {
+                    // CG uses its own residual calculation
+                    delta = strategy_->getResidual();
+                }
+                else
+                {
+                    // GS/SOR use max change
+                    delta = globalMaxResidual(localMax);
+                }
+                reductionTimer.stop();
+                iterTelemetry.reductionTime = reductionTimer.elapsedSeconds();
+            }
+            else
+            {
+                iterTelemetry.reductionTime = 0.0;
+            }
+
+            iterTelemetry.residual = delta;
+            iterTelemetry.totalIterTime = iterTelemetry.stepTime + 
+                                          iterTelemetry.exchangeTime + 
+                                          iterTelemetry.reductionTime;
+
+            telemetry->recordIteration(iterTelemetry);
 
             ++count;
 
@@ -148,56 +233,18 @@ namespace poisson
             }
         }
 
-        timer.stop();
+        totalTimer.stop();
+
+        // Finalize telemetry
+        telemetry->setFinalStats(totalTimer.elapsedSeconds(), count,
+                                 delta <= config_.precisionGoal(), delta);
 
         return SolveResult{
             count,
             delta,
-            timer.elapsedSeconds(),
-            delta <= config_.precisionGoal()};
-    }
-
-    double Solver::doStep(int parity)
-    {
-        double maxErr = 0.0;
-
-        const int xStart = grid_.ghostLayers();
-        const int xEnd = grid_.dimX() - grid_.ghostLayers();
-        const int yStart = grid_.ghostLayers();
-        const int yEnd = grid_.dimY() - grid_.ghostLayers();
-
-        // Get global offset for correct parity calculation in parallel
-        // The ghost layer offset (xStart, yStart) maps to global position subdomainOffset_
-        const int globalOffsetX = subdomainOffset_[0] - xStart;
-        const int globalOffsetY = subdomainOffset_[1] - yStart;
-
-        for (int x = xStart; x < xEnd; ++x)
-        {
-            for (int y = yStart; y < yEnd; ++y)
-            {
-                // Use GLOBAL coordinates for red-black parity check
-                // This ensures the same cells are "red" or "black" regardless of domain decomposition
-                int globalX = x + globalOffsetX;
-                int globalY = y + globalOffsetY;
-
-                if ((globalX + globalY) % 2 == parity && grid_.source(x, y) != 1)
-                {
-                    double oldPhi = grid_.phi(x, y);
-
-                    // 5-point stencil Laplacian
-                    grid_.phi(x, y) = 0.25 * (grid_.phi(x + 1, y) + grid_.phi(x - 1, y) +
-                                              grid_.phi(x, y + 1) + grid_.phi(x, y - 1));
-
-                    double err = std::fabs(oldPhi - grid_.phi(x, y));
-                    if (err > maxErr)
-                    {
-                        maxErr = err;
-                    }
-                }
-            }
-        }
-
-        return maxErr;
+            totalTimer.elapsedSeconds(),
+            delta <= config_.precisionGoal(),
+            telemetry};
     }
 
     void Solver::exchangeBoundaries()
