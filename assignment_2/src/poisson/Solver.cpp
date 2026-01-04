@@ -235,12 +235,17 @@ namespace poisson
 
         totalTimer.stop();
 
+        // Calculate total sweep-pairs performed
+        // For CG, each iteration is 1 step; for GS/SOR, each iteration is sweepsPerExchange sweep-pairs
+        int totalSweepPairs = singleStepPerIteration ? count : count * sweepsPerExchange;
+
         // Finalize telemetry
         telemetry->setFinalStats(totalTimer.elapsedSeconds(), count,
                                  delta <= config_.precisionGoal(), delta);
 
         return SolveResult{
             count,
+            totalSweepPairs,
             delta,
             totalTimer.elapsedSeconds(),
             delta <= config_.precisionGoal(),

@@ -47,20 +47,21 @@ ax1.errorbar(avg_df['grid_size'], avg_df['iterations_mean'],
 ax1.set_xlabel('Grid Size (N×N)', fontsize=12)
 ax1.set_ylabel('Iterations to Convergence', fontsize=12)
 ax1.set_title('Iterations to Convergence vs Grid Size', fontsize=14)
-ax1.grid(True, alpha=0.3)
-ax1.set_xscale('log', base=2)
-ax1.set_yscale('log', base=2)
+# ax1.set_xscale('log', base=2)
+# ax1.set_yscale('log', base=2)
+ax1.set_yticks(avg_df['iterations_mean'].values)
+ax1.set_yticklabels([f'{int(y)}' for y in avg_df['iterations_mean'].values])
+ax1.grid(True, alpha=0.3, which='both')
+ax1.grid(True, alpha=0.5, which='major')
 
-# Add trend line (power law fit: iterations = a * grid_size^b)
+# Add trend line (linear fit: iterations = a + b * grid_size)
 if len(avg_df) >= 2:
-    log_x = np.log(avg_df['grid_size'])
-    log_y = np.log(avg_df['iterations_mean'])
-    slope, intercept, r_value, p_value, std_err = stats.linregress(log_x, log_y)
+    slope, intercept, r_value, p_value, std_err = stats.linregress(avg_df['grid_size'], avg_df['iterations_mean'])
     
     x_fit = np.linspace(avg_df['grid_size'].min(), avg_df['grid_size'].max(), 100)
-    y_fit = np.exp(intercept) * x_fit ** slope
+    y_fit = intercept + slope * x_fit
     ax1.plot(x_fit, y_fit, '--', color='red', linewidth=2, 
-             label=f'Fit: iter ∝ N^{slope:.2f} (R²={r_value**2:.3f})')
+             label=f'Fit: iter = {intercept:.0f} + {slope:.2f}·N (R²={r_value**2:.3f})')
     ax1.legend(fontsize=10)
 
 # Plot 2: Time vs Grid Size
@@ -68,14 +69,15 @@ ax2.errorbar(avg_df['grid_size'], avg_df['time_mean'],
              yerr=avg_df['time_std'], fmt='s-', capsize=5, 
              markersize=10, linewidth=2, color='#ff7f0e')
 ax2.set_xlabel('Grid Size (N×N)', fontsize=12)
-ax2.set_ylabel('Time to Convergence (s)', fontsize=12)
+ax2.set_ylabel('Time to Convergence (ms)', fontsize=12)
 ax2.set_title('Time to Convergence vs Grid Size', fontsize=14)
 ax2.grid(True, alpha=0.3)
-ax2.set_xscale('log', base=2)
-ax2.set_yscale('log', base=2)
+# ax2.set_xscale('log', base=2)
+# ax2.set_yscale('log', base=2)
 
-# Add trend line for time
+# Add trend line for time (power law fit)
 if len(avg_df) >= 2:
+    log_x = np.log(avg_df['grid_size'])
     log_t = np.log(avg_df['time_mean'])
     slope_t, intercept_t, r_value_t, p_value_t, std_err_t = stats.linregress(log_x, log_t)
     

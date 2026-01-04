@@ -19,6 +19,7 @@ namespace poisson
     struct SolveResult
     {
         int iterations;       ///< Number of iterations performed
+        int totalSweepPairs;  ///< Total sweep-pairs performed (iterations * sweepsPerExchange)
         double finalResidual; ///< Final maximum residual
         double elapsedTime;   ///< Time taken in seconds
         bool converged;       ///< Whether the solver converged

@@ -9,11 +9,11 @@ CONFIG_FILE="input.dat"
 
 # Solver parameters
 OMEGA=1.8
-SOLVER="cg"
+SOLVER="sor"
 NUM_PROCS=8
 TOPOLOGY="4x2"
 GRID_SIZE=800
-
+ERROR_CHECK_INTERVAL=1
 # Maximum iterations (high enough to allow convergence)
 MAX_ITER=100000
 
@@ -57,7 +57,8 @@ output=$(mpirun --use-hwthread-cpus -np $NUM_PROCS "$EXECUTABLE" \
     --topology "$TOPOLOGY" \
     --verbose-timing \
     --timing-output "$OUTPUT_CSV" \
-    "$CONFIG_FILE" 2>&1)
+    --error-check-interval "$ERROR_CHECK_INTERVAL" \
+    "$CONFIG_FILE")
 
 echo "$output"
 

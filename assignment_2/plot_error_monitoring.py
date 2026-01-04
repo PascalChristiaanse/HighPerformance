@@ -30,6 +30,19 @@ print(f"\nTotal iterations: {len(df)}")
 print(f"Initial residual: {df['residual'].iloc[0]:.6e}")
 print(f"Final residual: {df['residual'].iloc[-1]:.6e}")
 
+# Calculate total times
+if 'step_time' in df.columns and 'exchange_time' in df.columns and 'reduction_time' in df.columns:
+    total_compute_time = df['step_time'].sum()
+    total_exchange_time = df['exchange_time'].sum()
+    total_reduction_time = df['reduction_time'].sum()
+    total_iter_time = df['total_iter_time'].sum() if 'total_iter_time' in df.columns else (total_compute_time + total_exchange_time + total_reduction_time)
+    
+    print(f"\nTime Breakdown:")
+    print(f"  Total compute time:   {total_compute_time:.4f} s ({100*total_compute_time/total_iter_time:.1f}%)")
+    print(f"  Total exchange time:  {total_exchange_time*1e6:.4f} µs ({100*total_exchange_time/total_iter_time:.6f}%)")
+    print(f"  Total reduction time: {total_reduction_time*1e6:.4f} µs ({100*total_reduction_time/total_iter_time:.6f}%)")
+    print(f"  Total iteration time: {total_iter_time:.4f} s")
+
 # Calculate convergence rate
 # For iterative methods: residual(n) ≈ residual(0) * ρ^n
 # where ρ is the spectral radius (convergence rate)
@@ -59,62 +72,62 @@ if len(df_positive) > 10:
     print(f"  Iterations to reduce error by 10x: {iters_per_decade:.1f}")
 
 # Create figure with multiple subplots
-fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+fig, axes = plt.subplots(1, 1, figsize=(8.27/1.5, 8.27/1.5))
 
 # Plot 1: Residual vs Iteration (log scale)
-ax1 = axes[0, 0]
-ax1.semilogy(df['iteration'], df['residual'], 'b-', linewidth=1, alpha=0.8)
-ax1.set_xlabel('Iteration', fontsize=12)
-ax1.set_ylabel('Residual (log scale)', fontsize=12)
-ax1.set_title(f'Residual vs Iteration ({GRID_SIZE}×{GRID_SIZE} grid)', fontsize=14)
-ax1.grid(True, alpha=0.3, which='both')
+# ax1 = axes[0, 0]
+# ax1.semilogy(df['iteration'], df['residual'], 'b-', linewidth=1, alpha=0.8)
+# ax1.set_xlabel('Iteration', fontsize=12)
+# ax1.set_ylabel('Residual (log scale)', fontsize=12)
+# ax1.set_title(f'Residual vs Iteration ({GRID_SIZE}×{GRID_SIZE} grid)', fontsize=14)
+# ax1.grid(True, alpha=0.3, which='both')
 
-# Add trend line
-if len(df_positive) > 10:
-    x_fit = np.linspace(0, df['iteration'].max(), 100)
-    y_fit = 10 ** (intercept + slope * x_fit)
-    ax1.semilogy(x_fit, y_fit, 'r--', linewidth=2, 
-                 label=f'Fit: ρ = {rho:.4f} (R² = {r_value**2:.3f})')
-    ax1.legend(fontsize=10)
+# # Add trend line
+# if len(df_positive) > 10:
+#     x_fit = np.linspace(0, df['iteration'].max(), 100)
+#     y_fit = 10 ** (intercept + slope * x_fit)
+#     ax1.semilogy(x_fit, y_fit, 'r--', linewidth=2, 
+#                  label=f'Fit: ρ = {rho:.4f} (R² = {r_value**2:.3f})')
+#     ax1.legend(fontsize=10)
 
 # Plot 2: Residual vs Iteration (linear scale, early iterations)
-ax2 = axes[0, 1]
-early_iters = min(100, len(df))
-ax2.plot(df['iteration'][:early_iters], df['residual'][:early_iters], 'b-', linewidth=1.5)
-ax2.set_xlabel('Iteration', fontsize=12)
-ax2.set_ylabel('Residual', fontsize=12)
-ax2.set_title(f'Early Convergence (first {early_iters} iterations)', fontsize=14)
-ax2.grid(True, alpha=0.3)
+# ax2 = axes[0, 1]
+# early_iters = min(100, len(df))
+# ax2.plot(df['iteration'][:early_iters], df['residual'][:early_iters], 'b-', linewidth=1.5)
+# ax2.set_xlabel('Iteration', fontsize=12)
+# ax2.set_ylabel('Residual', fontsize=12)
+# ax2.set_title(f'Early Convergence (first {early_iters} iterations)', fontsize=14)
+# ax2.grid(True, alpha=0.3)
 
 # Plot 3: Convergence rate per iteration
-ax3 = axes[1, 0]
-if len(df) > 1:
-    # Calculate iteration-by-iteration convergence rate
-    residuals = df['residual'].values
-    # Avoid division by zero
-    with np.errstate(divide='ignore', invalid='ignore'):
-        conv_rate = residuals[1:] / residuals[:-1]
-        conv_rate = np.where(np.isfinite(conv_rate) & (conv_rate > 0), conv_rate, np.nan)
+# ax3 = axes[1, 0]
+# if len(df) > 1:
+#     # Calculate iteration-by-iteration convergence rate
+#     residuals = df['residual'].values
+#     # Avoid division by zero
+#     with np.errstate(divide='ignore', invalid='ignore'):
+#         conv_rate = residuals[1:] / residuals[:-1]
+#         conv_rate = np.where(np.isfinite(conv_rate) & (conv_rate > 0), conv_rate, np.nan)
     
-    ax3.plot(df['iteration'][1:], conv_rate, 'g-', linewidth=0.5, alpha=0.5)
+#     ax3.plot(df['iteration'][1:], conv_rate, 'g-', linewidth=0.5, alpha=0.5)
     
-    # Add moving average
-    window = min(50, len(conv_rate) // 10)
-    if window > 1:
-        conv_rate_smooth = pd.Series(conv_rate).rolling(window=window, center=True).mean()
-        ax3.plot(df['iteration'][1:], conv_rate_smooth, 'r-', linewidth=2, 
-                 label=f'Moving avg (window={window})')
+#     # Add moving average
+#     window = min(50, len(conv_rate) // 10)
+#     if window > 1:
+#         conv_rate_smooth = pd.Series(conv_rate).rolling(window=window, center=True).mean()
+#         ax3.plot(df['iteration'][1:], conv_rate_smooth, 'r-', linewidth=2, 
+#                  label=f'Moving avg (window={window})')
     
-    ax3.axhline(y=rho, color='k', linestyle='--', linewidth=2, label=f'Average ρ = {rho:.4f}')
-    ax3.set_xlabel('Iteration', fontsize=12)
-    ax3.set_ylabel('Convergence Rate (ρ = r_{n+1}/r_n)', fontsize=12)
-    ax3.set_title('Per-Iteration Convergence Rate', fontsize=14)
-    ax3.set_ylim([0.9, 1.01])
-    ax3.grid(True, alpha=0.3)
-    ax3.legend(fontsize=10)
+#     ax3.axhline(y=rho, color='k', linestyle='--', linewidth=2, label=f'Average ρ = {rho:.4f}')
+#     ax3.set_xlabel('Iteration', fontsize=12)
+#     ax3.set_ylabel('Convergence Rate ($\\rho = r_{n+1}/r_n$)', fontsize=12)
+#     ax3.set_title('Per-Iteration Convergence Rate', fontsize=14)
+#     ax3.set_ylim([0.9, 1.01])
+#     ax3.grid(True, alpha=0.3)
+#     ax3.legend(fontsize=10)
 
 # Plot 4: Time breakdown per iteration
-ax4 = axes[1, 1]
+ax4 = axes
 if 'step_time' in df.columns and 'exchange_time' in df.columns:
     # Use moving average for smoother visualization
     window = min(50, len(df) // 10)
@@ -138,7 +151,7 @@ if 'step_time' in df.columns and 'exchange_time' in df.columns:
     ax4.legend(fontsize=10)
     ax4.set_yscale('log')
 
-plt.tight_layout()
+plt.tight_layout(pad=2.0, h_pad=3.0, w_pad=2.0)
 plt.savefig('error_monitoring_plot.png', dpi=150)
 plt.show()
 
@@ -185,7 +198,17 @@ for cp in checkpoints:
 latex_table += r"""\midrule
 \multicolumn{3}{l}{Convergence rate $\rho$ = """ + f"{rho:.6f}" + r"""} \\
 \multicolumn{3}{l}{Iterations per decade = """ + f"{iters_per_decade:.1f}" + r"""} \\
-\bottomrule
+"""
+
+# Add time breakdown if available
+if 'reduction_time' in df.columns:
+    latex_table += r"""\midrule
+\multicolumn{3}{l}{Total compute time = """ + f"{total_compute_time:.4f}" + r""" s (""" + f"{100*total_compute_time/total_iter_time:.1f}" + r"""\%)} \\
+\multicolumn{3}{l}{Total exchange time = """ + f"{total_exchange_time:.4f}" + r""" s (""" + f"{100*total_exchange_time/total_iter_time:.1f}" + r"""\%)} \\
+\multicolumn{3}{l}{Total reduction time = """ + f"{total_reduction_time:.4f}" + r""" s (""" + f"{100*total_reduction_time/total_iter_time:.1f}" + r"""\%)} \\
+"""
+
+latex_table += r"""\bottomrule
 \end{tabular}
 \end{table}"""
 
@@ -220,9 +243,14 @@ The optimal omega for an N×N grid is approximately:
 # Save raw data summary to CSV
 summary_data = {
     'metric': ['grid_size', 'total_iterations', 'initial_residual', 'final_residual', 
-               'convergence_rate', 'iters_per_decade', 'r_squared'],
+               'convergence_rate', 'iters_per_decade', 'r_squared',
+               'total_compute_time_s', 'total_exchange_time_s', 'total_reduction_time_s', 'total_iter_time_s'],
     'value': [GRID_SIZE, len(df), df['residual'].iloc[0], df['residual'].iloc[-1],
-              rho, iters_per_decade, r_value**2]
+              rho, iters_per_decade, r_value**2,
+              total_compute_time if 'step_time' in df.columns else 0,
+              total_exchange_time if 'exchange_time' in df.columns else 0,
+              total_reduction_time if 'reduction_time' in df.columns else 0,
+              total_iter_time if 'total_iter_time' in df.columns or 'step_time' in df.columns else 0]
 }
 summary_df = pd.DataFrame(summary_data)
 summary_df.to_csv('error_monitoring/summary_800.csv', index=False)

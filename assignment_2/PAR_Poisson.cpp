@@ -36,7 +36,7 @@ struct ProgramOptions
   // Solver options (exercises 1.2.x)
   std::string solverMethod = "sor";           // gs, sor, cg
   double omega = 1.8;                        // SOR relaxation parameter
-  int errorCheckInterval = 1;                // Check convergence every N iterations
+  int errorCheckInterval = 10;                // Check convergence every N iterations
   int sweepsPerExchange = 1;                 // Sweeps between border exchanges
   bool optimizedLoop = false;                // Use stride-2 loop optimization
 
@@ -412,6 +412,7 @@ int main(int argc, char **argv)
     {
       std::cout << "\n=== Results ===" << std::endl;
       std::cout << "Number of iterations: " << result.iterations << std::endl;
+      std::cout << "Total sweep-pairs: " << result.totalSweepPairs << std::endl;
       std::cout << "Converged: " << (result.converged ? "yes" : "no") << std::endl;
       std::cout << "Final residual: " << std::scientific << std::setprecision(6)
                 << result.finalResidual << std::endl;
