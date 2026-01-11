@@ -1,0 +1,3 @@
+[submodule "assignment_3/METIS"]
+	path = assignment_3/METIS
+	url = https://github.com/KarypisLab/METIS.git
