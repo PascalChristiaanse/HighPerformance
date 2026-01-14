@@ -17,9 +17,11 @@ import os
 import sys
 import csv
 import json
+import time
 from pathlib import Path
 from datetime import datetime
 import argparse
+import tempfile
 
 # Configuration
 CONFIGURATIONS = [
@@ -35,6 +37,16 @@ PROBLEM_SIZES = [
 
 NUM_RUNS = 3  # Number of runs per configuration for averaging
 
+# SLURM default settings
+SLURM_DEFAULTS = {
+    'partition': 'compute',
+    'time': '01:00:00',
+    'nodes': 1,
+    'ntasks_per_node': 4,
+    'account': 'Education-EEMCS-Courses-WI4049TU',
+    'mem_per_cpu': '1G',
+}
+
 
 def run_command(cmd, cwd=None, check=True):
     """Run a shell command and return the result."""
@@ -42,8 +54,9 @@ def run_command(cmd, cwd=None, check=True):
         cmd,
         shell=True,
         cwd=cwd,
-        capture_output=True,
-        text=True
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True
     )
     if check and result.returncode != 0:
         print(f"Error running: {cmd}")
@@ -59,16 +72,132 @@ def generate_grid(work_dir, px, py, dim_x, dim_y):
     run_command(cmd, cwd=work_dir)
 
 
-def run_solver(work_dir, np, telemetry_file, precision=None, max_iter=None):
+def run_solver(work_dir, np, telemetry_file, precision=None, max_iter=None,
+               use_slurm=False, slurm_opts=None):
     """Run MPI_Fempois with given parameters."""
-    cmd = f"mpirun -np {np} ./MPI_Fempois -t {telemetry_file}"
+    solver_args = f"-t {telemetry_file}"
     if precision is not None:
-        cmd += f" -p {precision}"
+        solver_args += f" -p {precision}"
     if max_iter is not None:
-        cmd += f" -m {max_iter}"
+        solver_args += f" -m {max_iter}"
     
-    result = run_command(cmd, cwd=work_dir)
+    if use_slurm:
+        result = run_solver_slurm(work_dir, np, solver_args, slurm_opts)
+    else:
+        cmd = f"mpirun -np {np} ./MPI_Fempois {solver_args}"
+        result = run_command(cmd, cwd=work_dir)
+    
     return result
+
+
+def run_solver_slurm(work_dir, np, solver_args, slurm_opts):
+    """Run MPI_Fempois using SLURM's srun (interactive mode)."""
+    opts = slurm_opts or {}
+    
+    # Build srun command for interactive execution
+    srun_cmd = "srun"
+    
+    if opts.get('partition'):
+        srun_cmd += f" --partition={opts['partition']}"
+    if opts.get('time'):
+        srun_cmd += f" --time={opts['time']}"
+    if opts.get('account'):
+        srun_cmd += f" --account={opts['account']}"
+    if opts.get('nodes'):
+        srun_cmd += f" --nodes={opts['nodes']}"
+    
+    srun_cmd += f" --ntasks={np}"
+    
+    if opts.get('ntasks_per_node'):
+        srun_cmd += f" --ntasks-per-node={opts['ntasks_per_node']}"
+    if opts.get('cpus_per_task'):
+        srun_cmd += f" --cpus-per-task={opts['cpus_per_task']}"
+    if opts.get('mem'):
+        srun_cmd += f" --mem={opts['mem']}"
+    if opts.get('mem_per_cpu'):
+        srun_cmd += f" --mem-per-cpu={opts['mem_per_cpu']}"
+    if opts.get('constraint'):
+        srun_cmd += f" --constraint={opts['constraint']}"
+    
+    # Add any extra SLURM options
+    if opts.get('extra_args'):
+        srun_cmd += f" {opts['extra_args']}"
+    
+    srun_cmd += f" ./MPI_Fempois {solver_args}"
+    
+    return run_command(srun_cmd, cwd=work_dir)
+
+
+def submit_batch_job(work_dir, np, solver_args, slurm_opts, job_name="fempois"):
+    """Submit a batch job to SLURM and wait for completion."""
+    opts = slurm_opts or {}
+    
+    # Create batch script
+    script_content = f"""#!/bin/bash
+#SBATCH --job-name={job_name}
+#SBATCH --output={job_name}_%j.out
+#SBATCH --error={job_name}_%j.err
+#SBATCH --ntasks={np}
+"""
+    
+    if opts.get('partition'):
+        script_content += f"#SBATCH --partition={opts['partition']}\n"
+    if opts.get('time'):
+        script_content += f"#SBATCH --time={opts['time']}\n"
+    if opts.get('account'):
+        script_content += f"#SBATCH --account={opts['account']}\n"
+    if opts.get('nodes'):
+        script_content += f"#SBATCH --nodes={opts['nodes']}\n"
+    if opts.get('ntasks_per_node'):
+        script_content += f"#SBATCH --ntasks-per-node={opts['ntasks_per_node']}\n"
+    if opts.get('cpus_per_task'):
+        script_content += f"#SBATCH --cpus-per-task={opts['cpus_per_task']}\n"
+    if opts.get('mem'):
+        script_content += f"#SBATCH --mem={opts['mem']}\n"
+    if opts.get('constraint'):
+        script_content += f"#SBATCH --constraint={opts['constraint']}\n"
+    
+    script_content += f"""
+cd {work_dir}
+srun ./MPI_Fempois {solver_args}
+"""
+    
+    # Write batch script
+    script_path = work_dir / f"{job_name}.sh"
+    with open(script_path, 'w') as f:
+        f.write(script_content)
+    
+    # Submit job
+    result = run_command(f"sbatch --parsable {script_path}", cwd=work_dir)
+    job_id = result.stdout.strip()
+    print(f"    Submitted batch job {job_id}")
+    
+    # Wait for job completion
+    wait_for_job(job_id)
+    
+    # Clean up
+    script_path.unlink(missing_ok=True)
+    
+    return result
+
+
+def wait_for_job(job_id, poll_interval=5):
+    """Wait for a SLURM job to complete."""
+    while True:
+        result = run_command(f"squeue -j {job_id} -h -o %T", check=False)
+        status = result.stdout.strip()
+        
+        if not status or status in ['COMPLETED', 'FAILED', 'CANCELLED', 'TIMEOUT']:
+            break
+        
+        time.sleep(poll_interval)
+    
+    # Check final job status
+    result = run_command(f"sacct -j {job_id} -o State -n -X", check=False)
+    final_status = result.stdout.strip().split('\n')[0].strip() if result.stdout else 'UNKNOWN'
+    
+    if final_status not in ['COMPLETED']:
+        raise RuntimeError(f"Job {job_id} ended with status: {final_status}")
 
 
 def parse_telemetry(telemetry_path):
@@ -90,7 +219,8 @@ def parse_telemetry(telemetry_path):
     return data
 
 
-def run_experiment(work_dir, config, problem_size, run_id, output_dir):
+def run_experiment(work_dir, config, problem_size, run_id, output_dir,
+                   use_slurm=False, slurm_opts=None):
     """Run a single experiment and return the results."""
     print(f"  Running {config['name']} with {problem_size['name']} (run {run_id + 1})...")
     
@@ -105,7 +235,8 @@ def run_experiment(work_dir, config, problem_size, run_id, output_dir):
     telemetry_file = output_dir / f"telemetry_{config['name']}_{problem_size['name']}_run{run_id}.csv"
     
     # Run solver
-    run_solver(work_dir, config['np'], telemetry_file)
+    run_solver(work_dir, config['np'], telemetry_file,
+               use_slurm=use_slurm, slurm_opts=slurm_opts)
     
     # Parse results
     results = parse_telemetry(telemetry_file)
@@ -253,6 +384,37 @@ def main():
                         default=['100x100', '200x200', '400x400'],
                         help='Problem sizes to run')
     
+    # SLURM options
+    slurm_group = parser.add_argument_group('SLURM options')
+    slurm_group.add_argument('--slurm', action='store_true',
+                             help='Run experiments using SLURM (srun)')
+    slurm_group.add_argument('--partition', '-p', type=str,
+                             default=SLURM_DEFAULTS['partition'],
+                             help=f"SLURM partition (default: {SLURM_DEFAULTS['partition']})")
+    slurm_group.add_argument('--time', '-t', type=str,
+                             default=SLURM_DEFAULTS['time'],
+                             help=f"Time limit per job (default: {SLURM_DEFAULTS['time']})")
+    slurm_group.add_argument('--account', '-A', type=str,
+                             default=SLURM_DEFAULTS['account'],
+                             help='SLURM account/project for billing')
+    slurm_group.add_argument('--nodes', '-N', type=int,
+                             default=SLURM_DEFAULTS['nodes'],
+                             help=f"Number of nodes (default: {SLURM_DEFAULTS['nodes']})")
+    slurm_group.add_argument('--ntasks-per-node', type=int,
+                             default=SLURM_DEFAULTS['ntasks_per_node'],
+                             help=f"Tasks per node (default: {SLURM_DEFAULTS['ntasks_per_node']})")
+    slurm_group.add_argument('--cpus-per-task', type=int, default=None,
+                             help='CPUs per task (optional)')
+    slurm_group.add_argument('--mem', type=str, default=None,
+                             help='Memory per node (e.g., 4G, 16000M)')
+    slurm_group.add_argument('--mem-per-cpu', type=str,
+                             default=SLURM_DEFAULTS['mem_per_cpu'],
+                             help=f"Memory per CPU (default: {SLURM_DEFAULTS['mem_per_cpu']})")
+    slurm_group.add_argument('--constraint', type=str, default=None,
+                             help='Node feature constraint')
+    slurm_group.add_argument('--slurm-extra', type=str, default=None,
+                             help='Extra SLURM arguments (passed directly to srun)')
+    
     args = parser.parse_args()
     
     work_dir = Path(args.work_dir).resolve()
@@ -263,11 +425,33 @@ def main():
     configs = [c for c in CONFIGURATIONS if c['name'] in args.configs]
     sizes = [s for s in PROBLEM_SIZES if s['name'] in args.sizes]
     
+    # Build SLURM options dictionary
+    slurm_opts = {
+        'partition': args.partition,
+        'time': args.time,
+        'account': args.account,
+        'nodes': args.nodes,
+        'ntasks_per_node': args.ntasks_per_node,
+        'cpus_per_task': args.cpus_per_task,
+        'mem': args.mem,
+        'mem_per_cpu': args.mem_per_cpu,
+        'constraint': args.constraint,
+        'extra_args': args.slurm_extra,
+    }
+    
     print(f"Working directory: {work_dir}")
     print(f"Output directory: {output_dir}")
     print(f"Configurations: {[c['name'] for c in configs]}")
     print(f"Problem sizes: {[s['name'] for s in sizes]}")
     print(f"Runs per configuration: {args.runs}")
+    if args.slurm:
+        print(f"SLURM mode: enabled")
+        print(f"  Partition: {args.partition}")
+        print(f"  Time limit: {args.time}")
+        if args.account:
+            print(f"  Account: {args.account}")
+    else:
+        print(f"Running locally with mpirun")
     print()
     
     # Run experiments
@@ -281,7 +465,8 @@ def main():
                 current += 1
                 print(f"[{current}/{total_experiments}] ", end='')
                 try:
-                    result = run_experiment(work_dir, config, size, run_id, output_dir)
+                    result = run_experiment(work_dir, config, size, run_id, output_dir,
+                                            use_slurm=args.slurm, slurm_opts=slurm_opts)
                     all_results.append(result)
                 except Exception as e:
                     print(f"  ERROR: {e}")
