@@ -2,9 +2,10 @@
 """
 Run experiments to find crossover points where communication time equals computation time.
 
-Two experiments:
+Three experiments:
 1. Fixed P=4: Vary problem size to find where T_comm ≈ T_compute
-2. Fixed 1000x1000: Vary P to find where T_comm ≈ T_compute
+2. Fixed 1000x1000: Vary P to find where T_comm ≈ T_compute  
+3. Surface: Vary both problem size and P to create crossover surface
 
 Note: Total processor time should not exceed 2 minutes!
 """
@@ -37,18 +38,26 @@ FIXED_P_CONFIG = {"name": "2x2", "px": 2, "py": 2, "np": 4}
 # Experiment 2: Fixed size 1000x1000, vary P
 # Need process counts that form valid grids
 FIXED_SIZE = {"name": "1000x1000", "dim_x": 1000, "dim_y": 1000}
-VARYING_P_CONFIGS = [
+
+# All process configurations (up to 48)
+# Note: 8x4 causes MPI_ERR_TRUNCATE in MPI_Fempois, using 4x8 instead
+ALL_P_CONFIGS = [
     {"name": "1x1", "px": 1, "py": 1, "np": 1},
     {"name": "2x1", "px": 2, "py": 1, "np": 2},
     {"name": "2x2", "px": 2, "py": 2, "np": 4},
     {"name": "4x2", "px": 4, "py": 2, "np": 8},
     {"name": "4x4", "px": 4, "py": 4, "np": 16},
-    {"name": "8x4", "px": 8, "py": 4, "np": 32},
-    # For extrapolation predictions (not run by default)
+    {"name": "4x8", "px": 4, "py": 8, "np": 32},  # was 8x4 but that causes truncation errors
+    {"name": "6x8", "px": 6, "py": 8, "np": 48},  # was 8x6
+    # For extrapolation predictions (larger configs)
     {"name": "8x8", "px": 8, "py": 8, "np": 64},
-    {"name": "16x8", "px": 16, "py": 8, "np": 128},
+    {"name": "8x16", "px": 8, "py": 16, "np": 128},  # was 16x8
     {"name": "16x16", "px": 16, "py": 16, "np": 256},
 ]
+
+# Experiment 3 (Surface): Vary both problem size and P
+SURFACE_SIZES = [100, 150, 200, 250, 300, 350, 400, 800]
+SURFACE_MAX_P = 48
 
 
 def run_command(cmd, cwd=None, check=True):
@@ -209,7 +218,7 @@ def run_experiment_fixed_size(work_dir, output_dir, use_slurm, slurm_opts, confi
     print("EXPERIMENT 2: Fixed size 1000x1000, varying P")
     print("=" * 60)
     
-    configs = configs or VARYING_P_CONFIGS
+    configs = configs or [c for c in ALL_P_CONFIGS if c['np'] <= 48]
     dim_x, dim_y = FIXED_SIZE['dim_x'], FIXED_SIZE['dim_y']
     results = []
     
@@ -240,7 +249,54 @@ def run_experiment_fixed_size(work_dir, output_dir, use_slurm, slurm_opts, confi
     return results
 
 
-def save_results(exp1_results, exp2_results, output_dir):
+def run_experiment_surface(work_dir, output_dir, use_slurm, slurm_opts, sizes=None, max_p=48, oversubscribe=False):
+    """Experiment 3: Vary both problem size and P to create surface data."""
+    print("\n" + "=" * 60)
+    print("EXPERIMENT 3: Surface - varying both problem size and P")
+    print("=" * 60)
+    
+    sizes = sizes or SURFACE_SIZES
+    configs = [c for c in ALL_P_CONFIGS if c['np'] <= max_p]
+    results = []
+    
+    for size in sizes:
+        dim_x = dim_y = size
+        print(f"\n  Problem size: {size}x{size}")
+        print("-" * 50)
+        
+        for config in configs:
+            exp_name = f"surface_{config['name']}_{size}x{size}"
+            print(f"    P={config['np']:3d} ({config['name']:5s})...", end=' ', flush=True)
+            
+            try:
+                # Adjust iterations based on problem size and P
+                # Larger problems need fewer iterations to get meaningful timing
+                if size >= 1000:
+                    max_iter = 100
+                elif size >= 500:
+                    max_iter = 150
+                else:
+                    max_iter = 200
+                
+                result = run_single_experiment(
+                    work_dir, config, dim_x, dim_y, output_dir, exp_name,
+                    use_slurm=use_slurm, slurm_opts=slurm_opts, max_iter=max_iter,
+                    oversubscribe=oversubscribe
+                )
+                results.append(result)
+                
+                t_compute = result.get('time_compute_avg', 0)
+                t_comm = result.get('time_comm_neighbors_avg', 0) + result.get('time_comm_global_avg', 0)
+                ratio = t_comm / t_compute if t_compute > 0 else float('inf')
+                
+                print(f"compute={t_compute:.4f}s, comm={t_comm:.4f}s, ratio={ratio:.3f}")
+            except Exception as e:
+                print(f"FAILED: {e}")
+    
+    return results
+
+
+def save_results(exp1_results, exp2_results, exp3_results, output_dir):
     """Save all results to files."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
@@ -250,6 +306,7 @@ def save_results(exp1_results, exp2_results, output_dir):
         json.dump({
             'experiment1_fixed_p': exp1_results,
             'experiment2_fixed_size': exp2_results,
+            'experiment3_surface': exp3_results,
             'timestamp': timestamp,
         }, f, indent=2)
     print(f"\nResults saved to: {json_file}")
@@ -270,10 +327,18 @@ def save_results(exp1_results, exp2_results, output_dir):
             writer.writeheader()
             writer.writerows(exp2_results)
     
+    # Save CSV for experiment 3 (surface)
+    if exp3_results:
+        csv_file = output_dir / f"crossover_surface_{timestamp}.csv"
+        with open(csv_file, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=exp3_results[0].keys())
+            writer.writeheader()
+            writer.writerows(exp3_results)
+    
     return json_file
 
 
-def print_summary(exp1_results, exp2_results):
+def print_summary(exp1_results, exp2_results, exp3_results):
     """Print summary of results."""
     print("\n" + "=" * 70)
     print("SUMMARY: Communication vs Computation Crossover Analysis")
@@ -306,6 +371,27 @@ def print_summary(exp1_results, exp2_results):
             crossover = "YES" if 0.8 < ratio < 1.2 else ("comm>" if ratio > 1 else "comp>")
             print(f"{r['np']:<8} {r['config_name']:<10} {t_compute:<12.4f} {t_comm:<12.4f} {ratio:<10.3f} {crossover:<10}")
     
+    if exp3_results:
+        print("\nExperiment 3: Surface (varying both n and P)")
+        print("-" * 70)
+        
+        # Group by size
+        sizes = sorted(set(r['dim_x'] for r in exp3_results))
+        for size in sizes:
+            size_results = [r for r in exp3_results if r['dim_x'] == size]
+            crossover_p = None
+            prev_ratio = None
+            for r in sorted(size_results, key=lambda x: x['np']):
+                t_compute = r.get('time_compute_avg', 0)
+                t_comm = r.get('time_comm_neighbors_avg', 0) + r.get('time_comm_global_avg', 0)
+                ratio = t_comm / t_compute if t_compute > 0 else float('inf')
+                if prev_ratio is not None and prev_ratio < 1 and ratio >= 1:
+                    crossover_p = r['np']
+                prev_ratio = ratio
+            
+            status = f"crossover at P≈{crossover_p}" if crossover_p else "no crossover in range"
+            print(f"  {size}x{size}: {status}")
+    
     print("=" * 70)
 
 
@@ -318,11 +404,15 @@ def main():
     parser.add_argument('--exp1-only', action='store_true',
                         help='Run only experiment 1 (fixed P)')
     parser.add_argument('--exp2-only', action='store_true',
-                        help='Run only experiment 2 (fixed size)')
+                        help='Run only experiment 2 (fixed size 1000x1000)')
+    parser.add_argument('--exp3-only', action='store_true',
+                        help='Run only experiment 3 (surface - varying both n and P)')
     parser.add_argument('--sizes', type=int, nargs='+', default=None,
-                        help='Problem sizes for experiment 1 (default: 50 75 100 150 200 300 400)')
-    parser.add_argument('--max-p', type=int, default=16,
-                        help='Maximum number of processes for experiment 2')
+                        help='Problem sizes for experiments (default varies by experiment)')
+    parser.add_argument('--surface-sizes', type=int, nargs='+', default=None,
+                        help='Problem sizes for surface experiment (default: 100 250 500 1000 1250 1500)')
+    parser.add_argument('--max-p', type=int, default=48,
+                        help='Maximum number of processes (default: 48)')
     parser.add_argument('--oversubscribe', action='store_true',
                         help='Allow mpirun to oversubscribe (run more processes than cores)')
     
@@ -341,8 +431,8 @@ def main():
                              help='SLURM account')
     slurm_group.add_argument('--nodes', '-N', type=int, default=1,
                              help='Number of nodes')
-    slurm_group.add_argument('--ntasks-per-node', type=int, default=16,
-                             help='Max tasks per node')
+    slurm_group.add_argument('--ntasks-per-node', type=int, default=48,
+                             help='Max tasks per node (default: 48)')
     slurm_group.add_argument('--mem-per-cpu', type=str,
                              default=SLURM_DEFAULTS['mem_per_cpu'],
                              help='Memory per CPU')
@@ -371,28 +461,50 @@ def main():
     
     exp1_results = []
     exp2_results = []
+    exp3_results = []
+    
+    # Determine which experiments to run
+    run_exp1 = not args.exp2_only and not args.exp3_only
+    run_exp2 = not args.exp1_only and not args.exp3_only
+    run_exp3 = args.exp3_only or (not args.exp1_only and not args.exp2_only)
+    
+    # If a specific experiment is requested, only run that one
+    if args.exp1_only:
+        run_exp1, run_exp2, run_exp3 = True, False, False
+    if args.exp2_only:
+        run_exp1, run_exp2, run_exp3 = False, True, False
+    if args.exp3_only:
+        run_exp1, run_exp2, run_exp3 = False, False, True
     
     # Run experiments
-    if not args.exp2_only:
+    if run_exp1:
         sizes = args.sizes or FIXED_P_SIZES
         exp1_results = run_experiment_fixed_p(
             work_dir, output_dir, args.slurm, slurm_opts, sizes,
             oversubscribe=args.oversubscribe
         )
     
-    if not args.exp1_only:
+    if run_exp2:
         # Filter configs based on max_p
-        configs = [c for c in VARYING_P_CONFIGS if c['np'] <= args.max_p]
+        configs = [c for c in ALL_P_CONFIGS if c['np'] <= args.max_p]
         exp2_results = run_experiment_fixed_size(
             work_dir, output_dir, args.slurm, slurm_opts, configs,
             oversubscribe=args.oversubscribe
         )
     
-    # Save and summarize
-    save_results(exp1_results, exp2_results, output_dir)
-    print_summary(exp1_results, exp2_results)
+    if run_exp3:
+        surface_sizes = args.surface_sizes or SURFACE_SIZES
+        exp3_results = run_experiment_surface(
+            work_dir, output_dir, args.slurm, slurm_opts, 
+            sizes=surface_sizes, max_p=args.max_p,
+            oversubscribe=args.oversubscribe
+        )
     
-    print("\nRun 'python scripts/analyze_crossover.py' to analyze and extrapolate results")
+    # Save and summarize
+    save_results(exp1_results, exp2_results, exp3_results, output_dir)
+    print_summary(exp1_results, exp2_results, exp3_results)
+    
+    print("\nRun 'python scripts/analyze_crossover.py' to analyze and plot results")
 
 
 if __name__ == '__main__':

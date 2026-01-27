@@ -2,19 +2,12 @@
 """
 Analyze crossover experiments to find where communication time equals computation time.
 
-Uses measured data to fit models and extrapolate crossover points:
-1. For fixed P=4: Find problem size n where T_comm = T_compute
-2. For fixed 1000x1000: Find P where T_comm = T_compute
+Creates three separate figures:
+1. Experiment 1: Fixed P=4, varying problem size
+2. Experiment 2 (1000x1000 only): Fixed size, varying P
+3. Experiment 3 (Surface): 3D surface showing crossover as function of both n and P
 
-Theoretical background:
-- Computation: T_compute ~ O(n² * iterations / P) per iteration: O(n²/P)
-- Neighbor communication: T_comm_neighbors ~ O(n/√P) for block, O(n) for stripe
-- Global communication: T_comm_global ~ O(log(P)) per Allreduce
-
-For CG solver, per iteration:
-- Compute: ~O(n²/P) - matrix-vector products, vector operations
-- Neighbor comm: ~O(n/√P) or O(n) - boundary exchange
-- Global comm: ~O(1) with O(log P) latency - Allreduce for dot products
+Uses measured data to fit models and find/extrapolate crossover points.
 """
 
 import os
@@ -25,6 +18,39 @@ import numpy as np
 from pathlib import Path
 from datetime import datetime
 import glob
+
+# Plotting availability: allow matplotlib without requiring scipy.
+# SciPy is optional (used for interpolation/advanced root-finding).
+HAS_MATPLOTLIB = False
+HAS_SCIPY = False
+HAS_PLOTTING = False
+try:
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    HAS_MATPLOTLIB = True
+except Exception:
+    HAS_MATPLOTLIB = False
+
+try:
+    from mpl_toolkits.mplot3d import Axes3D  # optional for 3D plotting
+except Exception:
+    Axes3D = None
+
+try:
+    from scipy.interpolate import griddata
+    from scipy.optimize import brentq
+    HAS_SCIPY = True
+except Exception:
+    HAS_SCIPY = False
+
+HAS_PLOTTING = HAS_MATPLOTLIB
+if not HAS_PLOTTING:
+    print("Warning: matplotlib not available. Plotting disabled.")
+else:
+    if not HAS_SCIPY:
+        print("Warning: scipy not available — 3D/interpolation features will be limited.")
+
 
 def load_latest_results(results_dir):
     """Load the most recent crossover results file."""
@@ -42,7 +68,6 @@ def load_latest_results(results_dir):
 
 def fit_power_law(x, y):
     """Fit y = a * x^b using linear regression on log-log scale."""
-    # Filter out zeros/negatives
     mask = (np.array(x) > 0) & (np.array(y) > 0)
     x_filt = np.array(x)[mask]
     y_filt = np.array(y)[mask]
@@ -53,12 +78,10 @@ def fit_power_law(x, y):
     log_x = np.log(x_filt)
     log_y = np.log(y_filt)
     
-    # Linear regression: log(y) = log(a) + b*log(x)
     coeffs = np.polyfit(log_x, log_y, 1)
-    b = coeffs[0]  # exponent
-    a = np.exp(coeffs[1])  # coefficient
+    b = coeffs[0]
+    a = np.exp(coeffs[1])
     
-    # R² calculation
     y_pred = a * x_filt**b
     ss_res = np.sum((y_filt - y_pred)**2)
     ss_tot = np.sum((y_filt - np.mean(y_filt))**2)
@@ -67,10 +90,21 @@ def fit_power_law(x, y):
     return a, b, r_squared
 
 
-def analyze_fixed_p(results):
-    """Analyze experiment 1: Fixed P=4, find crossover problem size."""
+def find_crossover(a_comp, b_comp, a_comm, b_comm):
+    """Find crossover point where a_comp * x^b_comp = a_comm * x^b_comm."""
+    if a_comp and a_comm and abs(b_comp - b_comm) > 0.01:
+        try:
+            crossover = (a_comm / a_comp) ** (1 / (b_comp - b_comm))
+            return crossover
+        except:
+            pass
+    return None
+
+
+def analyze_fixed_p(results, output_dir):
+    """Analyze and plot experiment 1: Fixed P=4, varying problem size."""
     print("\n" + "=" * 70)
-    print("ANALYSIS: Fixed P=4, varying problem size")
+    print("EXPERIMENT 1: Fixed P=4, varying problem size")
     print("=" * 70)
     
     if not results:
@@ -78,95 +112,89 @@ def analyze_fixed_p(results):
         return None
     
     # Extract data
-    sizes = []
-    t_compute = []
-    t_comm = []
-    
+    data = []
     for r in results:
         n = r['dim_x']
-        sizes.append(n)
-        tc = r.get('time_compute_avg', 0)
-        # Total communication = neighbors + global
-        tcomm = r.get('time_comm_neighbors_avg', 0) + r.get('time_comm_global_avg', 0)
-        t_compute.append(tc)
-        t_comm.append(tcomm)
+        iterations = r.get('iterations', 1)
+        t_compute = r.get('time_compute_avg', 0) / iterations
+        t_comm_nb = r.get('time_comm_neighbors_avg', 0) / iterations
+        t_comm_gl = r.get('time_comm_global_avg', 0) / iterations
+        t_comm = t_comm_nb + t_comm_gl
+        data.append((n, t_compute, t_comm, t_comm_nb, t_comm_gl))
     
-    sizes = np.array(sizes)
-    t_compute = np.array(t_compute)
-    t_comm = np.array(t_comm)
+    data.sort(key=lambda x: x[0])
+    sizes = np.array([d[0] for d in data])
+    t_compute = np.array([d[1] for d in data])
+    t_comm = np.array([d[2] for d in data])
     
-    # Normalize by iterations for per-iteration analysis
-    iterations = [r.get('iterations', 1) for r in results]
-    t_compute_per_iter = t_compute / np.array(iterations)
-    t_comm_per_iter = t_comm / np.array(iterations)
-    
+    # Print table
     print("\nMeasured data (per iteration):")
-    print(f"{'n':<8} {'T_compute':<15} {'T_comm':<15} {'Ratio':<10}")
+    print(f"{'n':<10} {'T_compute':<15} {'T_comm':<15} {'Ratio':<10}")
     print("-" * 50)
-    for i, n in enumerate(sizes):
-        ratio = t_comm_per_iter[i] / t_compute_per_iter[i] if t_compute_per_iter[i] > 0 else float('inf')
-        print(f"{n:<8} {t_compute_per_iter[i]:<15.6f} {t_comm_per_iter[i]:<15.6f} {ratio:<10.4f}")
+    for d in data:
+        ratio = d[2] / d[1] if d[1] > 0 else float('inf')
+        print(f"{d[0]:<10} {d[1]:<15.6f} {d[2]:<15.6f} {ratio:<10.4f}")
     
     # Fit power laws
-    # T_compute ~ a * n^b (expect b ≈ 2 for O(n²/P))
-    a_comp, b_comp, r2_comp = fit_power_law(sizes, t_compute_per_iter)
-    # T_comm ~ c * n^d (expect d ≈ 0.5-1 depending on partition)
-    a_comm, b_comm, r2_comm = fit_power_law(sizes, t_comm_per_iter)
+    a_comp, b_comp, r2_comp = fit_power_law(sizes, t_compute)
+    a_comm, b_comm, r2_comm = fit_power_law(sizes, t_comm)
     
     print("\nFitted models (T = a * n^b):")
-    if a_comp is not None:
+    if a_comp:
         print(f"  T_compute = {a_comp:.2e} * n^{b_comp:.3f}  (R² = {r2_comp:.4f})")
-        print(f"    Expected exponent: ~2 (O(n²/P)), measured: {b_comp:.3f}")
-    if a_comm is not None:
+    if a_comm:
         print(f"  T_comm    = {a_comm:.2e} * n^{b_comm:.3f}  (R² = {r2_comm:.4f})")
-        print(f"    Expected exponent: ~0.5-1 (O(n) or O(n/√P)), measured: {b_comm:.3f}")
     
-    # Find crossover: a_comp * n^b_comp = a_comm * n^b_comm
-    # n^(b_comp - b_comm) = a_comm / a_comp
-    # n = (a_comm / a_comp)^(1/(b_comp - b_comm))
-    crossover_n = None
-    if a_comp and a_comm and abs(b_comp - b_comm) > 0.01:
-        try:
-            crossover_n = (a_comm / a_comp) ** (1 / (b_comp - b_comm))
-            print(f"\n*** CROSSOVER ESTIMATE (T_comm = T_compute): n ≈ {crossover_n:.0f} ***")
-            
-            # Verify by computing times at crossover
-            t_comp_cross = a_comp * crossover_n**b_comp
-            t_comm_cross = a_comm * crossover_n**b_comm
-            print(f"    At n={crossover_n:.0f}: T_compute ≈ {t_comp_cross:.6f}s, T_comm ≈ {t_comm_cross:.6f}s")
-        except:
-            print("\nCould not compute crossover (numerical issues)")
-    else:
-        # Find by interpolation
-        ratios = t_comm_per_iter / t_compute_per_iter
-        for i in range(len(ratios) - 1):
-            if (ratios[i] < 1 and ratios[i+1] >= 1) or (ratios[i] > 1 and ratios[i+1] <= 1):
-                # Linear interpolation
-                crossover_n = sizes[i] + (sizes[i+1] - sizes[i]) * (1 - ratios[i]) / (ratios[i+1] - ratios[i])
-                print(f"\n*** CROSSOVER ESTIMATE (interpolated): n ≈ {crossover_n:.0f} ***")
-                break
+    crossover_n = find_crossover(a_comp, b_comp, a_comm, b_comm)
+    if crossover_n:
+        print(f"\n*** CROSSOVER ESTIMATE: n ≈ {crossover_n:.0f} ***")
     
-    if crossover_n is None:
-        ratios = t_comm_per_iter / t_compute_per_iter
-        if all(r < 1 for r in ratios):
-            print("\n*** Computation dominates for all tested sizes. Crossover at n < {:.0f} ***".format(min(sizes)))
-        else:
-            print("\n*** Communication dominates for all tested sizes. Crossover at n > {:.0f} ***".format(max(sizes)))
+    # Plot
+    if HAS_PLOTTING:
+        fig, ax = plt.subplots(figsize=(8.27/1.75, 8.27/2))
+        
+        ax.loglog(sizes, t_compute, 'bo-', markersize=8, linewidth=2, label='Computation')
+        ax.loglog(sizes, t_comm, 'rs-', markersize=8, linewidth=2, label='Communication')
+        
+        # Plot fitted lines
+        n_range = np.logspace(np.log10(min(sizes)*0.5), np.log10(max(sizes)*2), 100)
+        if a_comp:
+            ax.loglog(n_range, a_comp * n_range**b_comp, 'b--', alpha=0.5, 
+                     label=f'Fit: {a_comp:.1e}·n^{b_comp:.2f}')
+        if a_comm:
+            ax.loglog(n_range, a_comm * n_range**b_comm, 'r--', alpha=0.5,
+                     label=f'Fit: {a_comm:.1e}·n^{b_comm:.2f}')
+        
+        if crossover_n and min(sizes)*0.5 < crossover_n < max(sizes)*2:
+            ax.axvline(crossover_n, color='green', linestyle=':', linewidth=2,
+                      label=f'Crossover: n≈{crossover_n:.0f}')
+        
+        ax.set_xlabel('Problem Size (n)', fontsize=12)
+        ax.set_ylabel('Mean Time per Iteration (s)', fontsize=12)
+        # ax.set_title('Experiment 1: Fixed P=4, Varying Problem Size', fontsize=14)
+        ax.legend(loc='best')
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        fig.savefig(output_dir / 'exp1_fixed_p.png', dpi=150)
+        fig.savefig(output_dir / 'exp1_fixed_p.pdf')
+        print(f"\nPlot saved to: {output_dir / 'exp1_fixed_p.png'}")
+        plt.close(fig)
     
     return {
         'sizes': sizes.tolist(),
-        't_compute': t_compute_per_iter.tolist(),
-        't_comm': t_comm_per_iter.tolist(),
+        't_compute': t_compute.tolist(),
+        't_comm': t_comm.tolist(),
         'fit_compute': {'a': a_comp, 'b': b_comp, 'r2': r2_comp},
         'fit_comm': {'a': a_comm, 'b': b_comm, 'r2': r2_comm},
         'crossover_n': crossover_n,
     }
 
 
-def analyze_fixed_size(results):
-    """Analyze experiment 2: Fixed size, find crossover P."""
+def analyze_fixed_size(results, output_dir):
+    """Analyze and plot experiment 2: Fixed size 1000x1000, varying P."""
     print("\n" + "=" * 70)
-    print("ANALYSIS: Fixed size 1000x1000, varying P")
+    print("EXPERIMENT 2: Fixed size 1000x1000, varying P")
     print("=" * 70)
     
     if not results:
@@ -174,154 +202,302 @@ def analyze_fixed_size(results):
         return None
     
     # Extract data
-    procs = []
-    t_compute = []
-    t_comm = []
-    t_comm_neighbors = []
-    t_comm_global = []
-    
+    data = []
     for r in results:
         p = r['np']
-        procs.append(p)
-        tc = r.get('time_compute_avg', 0)
-        tcn = r.get('time_comm_neighbors_avg', 0)
-        tcg = r.get('time_comm_global_avg', 0)
-        t_compute.append(tc)
-        t_comm_neighbors.append(tcn)
-        t_comm_global.append(tcg)
-        t_comm.append(tcn + tcg)
+        iterations = r.get('iterations', 1)
+        t_compute = r.get('time_compute_avg', 0) / iterations
+        t_comm_nb = r.get('time_comm_neighbors_avg', 0) / iterations
+        t_comm_gl = r.get('time_comm_global_avg', 0) / iterations
+        t_comm = t_comm_nb + t_comm_gl
+        data.append((p, t_compute, t_comm, t_comm_nb, t_comm_gl))
     
-    procs = np.array(procs)
-    t_compute = np.array(t_compute)
-    t_comm = np.array(t_comm)
-    t_comm_neighbors = np.array(t_comm_neighbors)
-    t_comm_global = np.array(t_comm_global)
+    data.sort(key=lambda x: x[0])
+    procs = np.array([d[0] for d in data])
+    t_compute = np.array([d[1] for d in data])
+    t_comm = np.array([d[2] for d in data])
+    t_comm_nb = np.array([d[3] for d in data])
+    t_comm_gl = np.array([d[4] for d in data])
     
-    # Normalize by iterations
-    iterations = [r.get('iterations', 1) for r in results]
-    t_compute_per_iter = t_compute / np.array(iterations)
-    t_comm_per_iter = t_comm / np.array(iterations)
-    t_comm_n_per_iter = t_comm_neighbors / np.array(iterations)
-    t_comm_g_per_iter = t_comm_global / np.array(iterations)
-    
+    # Print table
     print("\nMeasured data (per iteration):")
-    print(f"{'P':<6} {'T_compute':<12} {'T_comm_nb':<12} {'T_comm_gl':<12} {'T_comm_tot':<12} {'Ratio':<8}")
+    print(f"{'P':<6} {'T_compute':<12} {'T_comm_nb':<12} {'T_comm_gl':<12} {'T_comm':<12} {'Ratio':<8}")
     print("-" * 65)
-    for i, p in enumerate(procs):
-        ratio = t_comm_per_iter[i] / t_compute_per_iter[i] if t_compute_per_iter[i] > 0 else float('inf')
-        print(f"{p:<6} {t_compute_per_iter[i]:<12.6f} {t_comm_n_per_iter[i]:<12.6f} "
-              f"{t_comm_g_per_iter[i]:<12.6f} {t_comm_per_iter[i]:<12.6f} {ratio:<8.4f}")
+    for d in data:
+        ratio = d[2] / d[1] if d[1] > 0 else float('inf')
+        print(f"{d[0]:<6} {d[1]:<12.6f} {d[3]:<12.6f} {d[4]:<12.6f} {d[2]:<12.6f} {ratio:<8.4f}")
     
-    # Fit models
-    # T_compute ~ a / P (expect speedup with more processes)
-    # T_comm ~ c * sqrt(P) or c * log(P)
-    
-    # Fit T_compute = a * P^b (expect b ≈ -1)
-    a_comp, b_comp, r2_comp = fit_power_law(procs, t_compute_per_iter)
-    # Fit T_comm = c * P^d
-    a_comm, b_comm, r2_comm = fit_power_law(procs, t_comm_per_iter)
+    # Fit power laws
+    a_comp, b_comp, r2_comp = fit_power_law(procs, t_compute)
+    a_comm, b_comm, r2_comm = fit_power_law(procs, t_comm)
     
     print("\nFitted models (T = a * P^b):")
-    if a_comp is not None:
+    if a_comp:
         print(f"  T_compute = {a_comp:.2e} * P^{b_comp:.3f}  (R² = {r2_comp:.4f})")
-        print(f"    Expected exponent: ~-1 (O(1/P)), measured: {b_comp:.3f}")
-    if a_comm is not None:
+        print(f"    Expected: ~P^-1 (ideal scaling)")
+    if a_comm:
         print(f"  T_comm    = {a_comm:.2e} * P^{b_comm:.3f}  (R² = {r2_comm:.4f})")
-        print(f"    Expected exponent: ~0.5 (O(√P)), measured: {b_comm:.3f}")
+        print(f"    Expected: ~P^0.5 (boundary scaling)")
     
-    # Find crossover P
-    crossover_p = None
-    if a_comp and a_comm and abs(b_comp - b_comm) > 0.01:
-        try:
-            crossover_p = (a_comm / a_comp) ** (1 / (b_comp - b_comm))
-            print(f"\n*** CROSSOVER ESTIMATE (T_comm = T_compute): P ≈ {crossover_p:.0f} ***")
-            
-            # Verify
-            t_comp_cross = a_comp * crossover_p**b_comp
-            t_comm_cross = a_comm * crossover_p**b_comm
-            print(f"    At P={crossover_p:.0f}: T_compute ≈ {t_comp_cross:.6f}s, T_comm ≈ {t_comm_cross:.6f}s")
-        except:
-            print("\nCould not compute crossover (numerical issues)")
-    else:
-        # Find by interpolation
-        ratios = t_comm_per_iter / t_compute_per_iter
-        for i in range(len(ratios) - 1):
-            if (ratios[i] < 1 and ratios[i+1] >= 1) or (ratios[i] > 1 and ratios[i+1] <= 1):
-                # Linear interpolation in log space
-                log_p = np.log(procs)
-                crossover_log_p = log_p[i] + (log_p[i+1] - log_p[i]) * (1 - ratios[i]) / (ratios[i+1] - ratios[i])
-                crossover_p = np.exp(crossover_log_p)
-                print(f"\n*** CROSSOVER ESTIMATE (interpolated): P ≈ {crossover_p:.0f} ***")
-                break
+    crossover_p = find_crossover(a_comp, b_comp, a_comm, b_comm)
+    if crossover_p:
+        print(f"\n*** CROSSOVER ESTIMATE: P ≈ {crossover_p:.0f} ***")
     
-    if crossover_p is None:
-        ratios = t_comm_per_iter / t_compute_per_iter
-        if all(r < 1 for r in ratios):
-            print("\n*** Computation dominates for all tested P. Crossover at P > {:.0f} ***".format(max(procs)))
-        else:
-            print("\n*** Communication dominates for all tested P. Crossover at P < {:.0f} ***".format(min(procs)))
+    # Plot
+    if HAS_PLOTTING:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        ax.loglog(procs, t_compute, 'bo-', markersize=8, linewidth=2, label='Computation')
+        ax.loglog(procs, t_comm, 'rs-', markersize=8, linewidth=2, label='Total Communication')
+        ax.loglog(procs, t_comm_nb, 'g^--', markersize=6, linewidth=1.5, alpha=0.7, label='Neighbor Comm')
+        ax.loglog(procs, t_comm_gl, 'mv--', markersize=6, linewidth=1.5, alpha=0.7, label='Global Comm')
+        
+        # Plot fitted lines
+        p_range = np.logspace(0, np.log10(max(procs)*2), 100)
+        if a_comp:
+            ax.loglog(p_range, a_comp * p_range**b_comp, 'b--', alpha=0.4)
+        if a_comm:
+            ax.loglog(p_range, a_comm * p_range**b_comm, 'r--', alpha=0.4)
+        
+        if crossover_p and crossover_p < max(procs)*2:
+            ax.axvline(crossover_p, color='orange', linestyle=':', linewidth=2,
+                      label=f'Crossover: P≈{crossover_p:.0f}')
+        
+        ax.set_xlabel('Number of Processes (P)', fontsize=12)
+        ax.set_ylabel('Time per Iteration (s)', fontsize=12)
+        # ax.set_title('Experiment 2: Fixed 1000×1000 Grid, Varying P', fontsize=14)
+        ax.legend(loc='best')
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        fig.savefig(output_dir / 'exp2_fixed_size_1000.png', dpi=150)
+        fig.savefig(output_dir / 'exp2_fixed_size_1000.pdf')
+        print(f"\nPlot saved to: {output_dir / 'exp2_fixed_size_1000.png'}")
+        plt.close(fig)
     
     return {
         'procs': procs.tolist(),
-        't_compute': t_compute_per_iter.tolist(),
-        't_comm': t_comm_per_iter.tolist(),
-        't_comm_neighbors': t_comm_n_per_iter.tolist(),
-        't_comm_global': t_comm_g_per_iter.tolist(),
+        't_compute': t_compute.tolist(),
+        't_comm': t_comm.tolist(),
         'fit_compute': {'a': a_comp, 'b': b_comp, 'r2': r2_comp},
         'fit_comm': {'a': a_comm, 'b': b_comm, 'r2': r2_comm},
         'crossover_p': crossover_p,
     }
 
 
-def theoretical_analysis():
-    """Print theoretical analysis for reference."""
+def analyze_surface(results, output_dir):
+    """Analyze and plot experiment 3: Surface showing crossover for varying n and P."""
     print("\n" + "=" * 70)
-    print("THEORETICAL ANALYSIS")
+    print("EXPERIMENT 3: Surface - varying both n and P")
     print("=" * 70)
     
-    print("""
-For the Conjugate Gradient solver on an n×n grid with P processes:
-
-Per iteration costs:
-  - Computation: Matrix-vector product (SpMV) + vector operations
-    T_compute ∝ n²/P  (each process handles n²/P grid points)
+    if not results:
+        print("No results for experiment 3")
+        return None
     
-  - Neighbor communication: Ghost cell exchange
-    T_comm_neighbors ∝ n/√P  (block partition boundary length)
-    or T_comm_neighbors ∝ n   (stripe partition)
+    # Extract data
+    sizes = sorted(set(r['dim_x'] for r in results))
+    procs = sorted(set(r['np'] for r in results))
     
-  - Global communication: 2× MPI_Allreduce for dot products
-    T_comm_global ∝ log(P)  (reduction tree)
+    print(f"\nProblem sizes tested: {sizes}")
+    print(f"Process counts tested: {procs}")
+    
+    # Build data arrays
+    data_points = []
+    ratio_matrix = np.full((len(sizes), len(procs)), np.nan)
+    
+    print("\nCommunication/Computation Ratio (T_comm/T_compute):")
+    print("-" * (12 + 10 * len(procs)))
+    col_header = "n \\ P"
+    header = "{:<12}".format(col_header) + "".join("{:<10}".format(p) for p in procs)
+    print(header)
+    print("-" * (12 + 10 * len(procs)))
+    
+    for i, size in enumerate(sizes):
+        row = f"{size:<12}"
+        for j, p in enumerate(procs):
+            # Find matching result
+            matching = [r for r in results if r['dim_x'] == size and r['np'] == p]
+            if matching:
+                r = matching[0]
+                iterations = r.get('iterations', 1)
+                t_compute = r.get('time_compute_avg', 0) / iterations
+                t_comm = (r.get('time_comm_neighbors_avg', 0) + r.get('time_comm_global_avg', 0)) / iterations
+                ratio = t_comm / t_compute if t_compute > 0 else float('inf')
+                ratio_matrix[i, j] = ratio
+                data_points.append((size, p, t_compute, t_comm, ratio))
+                row += f"{ratio:<10.3f}"
+            else:
+                row += f"{'---':<10}"
+        print(row)
+    
+    # Find crossover points for each problem size
+    print("\nCrossover points (T_comm = T_compute):")
+    print("-" * 50)
+    crossover_points = []
+    
+    for i, size in enumerate(sizes):
+        ratios = ratio_matrix[i, :]
+        valid_idx = ~np.isnan(ratios)
+        if not np.any(valid_idx):
+            continue
+        
+        valid_procs = np.array(procs)[valid_idx]
+        valid_ratios = ratios[valid_idx]
+        
+        # Find where ratio crosses 1
+        crossover_p = None
+        for k in range(len(valid_ratios) - 1):
+            if valid_ratios[k] < 1 and valid_ratios[k+1] >= 1:
+                # Linear interpolation in log space
+                log_p1, log_p2 = np.log(valid_procs[k]), np.log(valid_procs[k+1])
+                r1, r2 = valid_ratios[k], valid_ratios[k+1]
+                crossover_log_p = log_p1 + (log_p2 - log_p1) * (1 - r1) / (r2 - r1)
+                crossover_p = np.exp(crossover_log_p)
+                break
+        
+        if crossover_p:
+            print(f"  n={size:5d}: P_crossover ≈ {crossover_p:.1f}")
+            crossover_points.append((size, crossover_p))
+        elif np.all(valid_ratios < 1):
+            print(f"  n={size:5d}: Computation dominates for all P (crossover at P > {max(valid_procs)})")
+        else:
+            print(f"  n={size:5d}: Communication dominates for all P (crossover at P < {min(valid_procs)})")
+    
+    # Fit crossover curve: P_crossover = f(n)
+    if len(crossover_points) >= 2:
+        cross_n = np.array([cp[0] for cp in crossover_points])
+        cross_p = np.array([cp[1] for cp in crossover_points])
+        a_cross, b_cross, r2_cross = fit_power_law(cross_n, cross_p)
+        if a_cross:
+            print(f"\nCrossover curve fit: P_crossover = {a_cross:.2e} * n^{b_cross:.3f} (R² = {r2_cross:.4f})")
+            # Estimate P_crossover for n = 1000 using the fitted curve
+            try:
+                n_est = 1000
+                p_est = a_cross * (n_est ** b_cross)
+                print(f"Estimated P_crossover for n={n_est}: P ≈ {p_est:.1f}")
+            except Exception:
+                pass
+    
+    # Plot
+    if HAS_PLOTTING:
+        # Create figure with 2 subplots: surface and crossover curve
+        fig = plt.figure(figsize=(8.27/1.75, 8.27/1.75)) # A4 size
+        
+        # # 3D Surface plot of ratio
+        # ax1 = fig.add_subplot(121, projection='3d')
+        
+        # # Create meshgrid for surface
+        # N, P = np.meshgrid(sizes, procs)
+        # Z = ratio_matrix.T  # Transpose to match meshgrid orientation
+        
+        # # Plot surface
+        # surf = ax1.plot_surface(np.log10(N), np.log10(P), np.log10(Z + 0.001), 
+        #                         cmap='RdYlGn_r', alpha=0.8, edgecolor='none')
+        
+        # # Add crossover plane at ratio = 1 (log10(1) = 0)
+        # ax1.plot_surface(np.log10(N), np.log10(P), 
+        #                 np.zeros_like(Z), alpha=0.3, color='blue')
+        
+        # ax1.set_xlabel('log₁₀(n)', fontsize=10)
+        # ax1.set_ylabel('log₁₀(P)', fontsize=10)
+        # ax1.set_zlabel('log₁₀(Ratio)', fontsize=10)
+        # ax1.set_title('Communication/Computation Ratio Surface', fontsize=12)
+        
+        # # Add colorbar
+        # cbar = fig.colorbar(surf, ax=ax1, shrink=0.5, aspect=10)
+        # cbar.set_label('log₁₀(T_comm/T_compute)')
+        
+        # # 2D plot: Crossover curve
+        ax2 = fig.add_subplot(111)
+        
+        # Plot data points colored by ratio
+        for dp in data_points:
+            n, p, t_comp, t_comm, ratio = dp
+            color = 'blue' if ratio < 1 else 'red'
+            ax2.scatter(n, p, c=color, s=50, alpha=0.6)
+        
+        # Plot crossover points
+        if crossover_points:
+            cross_n = [cp[0] for cp in crossover_points]
+            cross_p = [cp[1] for cp in crossover_points]
+            ax2.plot(cross_n, cross_p, 'go-', markersize=10, linewidth=2, 
+                    label='Crossover line')
+            
+            # Extrapolate and plot fitted curve
+            if len(crossover_points) >= 2:
+                a_cross, b_cross, _ = fit_power_law(cross_n, cross_p)
+                if a_cross:
+                    n_ext = np.linspace(min(sizes)*0.8, max(sizes)*1.2, 100)
+                    p_ext = a_cross * n_ext**b_cross
+                    ax2.plot(n_ext, p_ext, 'g--', alpha=0.5, 
+                            label=f'Fit: P={a_cross:.1e}·n^{b_cross:.2f}')
+        
+        ax2.set_xlabel('Problem Size (n)', fontsize=12)
+        ax2.set_ylabel('Number of Processes (P)', fontsize=12)
+        # ax2.set_title('Crossover Boundary\n(Blue: compute-bound, Red: comm-bound)', fontsize=12)
+        ax2.legend(loc='best')
+        ax2.grid(True, alpha=0.3)
+        ax2.set_xscale('log')
+        ax2.set_yscale('log')
+        
+        plt.tight_layout()
+        fig.savefig(output_dir / 'exp3_surface.png', dpi=150)
+        fig.savefig(output_dir / 'exp3_surface.pdf')
+        print(f"\nPlot saved to: {output_dir / 'exp3_surface.png'}")
+        plt.close(fig)
+        
+        # Additional plot: Heatmap of ratio
+        fig2, ax = plt.subplots(figsize=(10, 8))
+        
+        # Use imshow for heatmap
+        im = ax.imshow(np.log10(ratio_matrix + 0.001), aspect='auto', 
+                       cmap='RdYlGn_r', origin='lower',
+                       extent=[np.log10(min(procs))-0.2, np.log10(max(procs))+0.2,
+                               np.log10(min(sizes))-0.2, np.log10(max(sizes))+0.2])
+        
+        # Add contour at ratio = 1
+        if not np.all(np.isnan(ratio_matrix)):
+            try:
+                P_grid, N_grid = np.meshgrid(np.log10(procs), np.log10(sizes))
+                cs = ax.contour(P_grid, N_grid, np.log10(ratio_matrix + 0.001), 
+                               levels=[0], colors='black', linewidths=2)
+                ax.clabel(cs, inline=True, fmt='ratio=1', fontsize=10)
+            except:
+                pass
+        
+        ax.set_xlabel('log₁₀(P)', fontsize=12)
+        ax.set_ylabel('log₁₀(n)', fontsize=12)
+        # ax.set_title('Communication/Computation Ratio Heatmap\n(Green: compute-bound, Red: comm-bound)', fontsize=14)
+        
+        cbar = fig2.colorbar(im, ax=ax)
+        cbar.set_label('log₁₀(T_comm/T_compute)')
+        
+        # Add tick labels
+        ax.set_xticks(np.log10(procs))
+        ax.set_xticklabels(procs)
+        ax.set_yticks(np.log10(sizes))
+        ax.set_yticklabels(sizes)
+        
+        plt.tight_layout()
+        fig2.savefig(output_dir / 'exp3_heatmap.png', dpi=150)
+        fig2.savefig(output_dir / 'exp3_heatmap.pdf')
+        print(f"Heatmap saved to: {output_dir / 'exp3_heatmap.png'}")
+        plt.close(fig2)
+    
+    return {
+        'sizes': sizes,
+        'procs': procs,
+        'ratio_matrix': ratio_matrix.tolist(),
+        'crossover_points': crossover_points,
+    }
 
-Crossover analysis:
 
-1. Fixed P=4, varying n:
-   T_compute = α·n²/P,  T_comm = β·n/√P + γ·log(P)
-   
-   For large n, T_compute dominates (O(n²) vs O(n))
-   Crossover when: α·n²/P = β·n/√P
-                   n = β·√P / α
-   
-   For P=4: n_crossover ≈ β/α · 2
-
-2. Fixed n=1000, varying P:
-   T_compute = α·n²/P,  T_comm = β·n/√P + γ·log(P)
-   
-   As P increases, T_compute decreases while T_comm increases
-   Crossover when: α·n²/P = β·n/√P
-                   P^(1/2) = α·n / β
-                   P = (α·n/β)²
-   
-   For n=1000: P_crossover depends on α/β ratio (machine-dependent)
-""")
-
-
-def save_analysis(analysis1, analysis2, output_dir):
+def save_analysis(analysis1, analysis2, analysis3, output_dir):
     """Save analysis results."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_file = output_dir / f"crossover_analysis_{timestamp}.json"
     
-    # Convert numpy types to Python types for JSON serialization
     def convert(obj):
         if isinstance(obj, np.ndarray):
             return obj.tolist()
@@ -339,6 +515,7 @@ def save_analysis(analysis1, analysis2, output_dir):
         json.dump({
             'fixed_p_analysis': convert(analysis1),
             'fixed_size_analysis': convert(analysis2),
+            'surface_analysis': convert(analysis3),
             'timestamp': timestamp,
         }, f, indent=2)
     
@@ -351,16 +528,11 @@ def main():
                         help='Directory containing experiment results')
     parser.add_argument('--results-file', type=str, default=None,
                         help='Specific results file to analyze')
-    parser.add_argument('--theoretical', action='store_true',
-                        help='Print theoretical analysis')
     args = parser.parse_args()
     
     results_dir = Path(args.results_dir)
     if not results_dir.is_absolute():
         results_dir = Path.cwd() / results_dir
-    
-    if args.theoretical:
-        theoretical_analysis()
     
     # Load results
     try:
@@ -372,21 +544,19 @@ def main():
     except FileNotFoundError as e:
         print(f"Error: {e}")
         print("Run 'python scripts/run_crossover_experiments.py' first to generate data")
-        theoretical_analysis()
         return
     
-    # Analyze
+    # Analyze each experiment
     exp1_results = data.get('experiment1_fixed_p', [])
     exp2_results = data.get('experiment2_fixed_size', [])
+    exp3_results = data.get('experiment3_surface', [])
     
-    analysis1 = analyze_fixed_p(exp1_results)
-    analysis2 = analyze_fixed_size(exp2_results)
-    
-    # Print theoretical context
-    theoretical_analysis()
+    analysis1 = analyze_fixed_p(exp1_results, results_dir)
+    analysis2 = analyze_fixed_size(exp2_results, results_dir)
+    analysis3 = analyze_surface(exp3_results, results_dir)
     
     # Save analysis
-    save_analysis(analysis1, analysis2, results_dir)
+    save_analysis(analysis1, analysis2, analysis3, results_dir)
     
     # Summary
     print("\n" + "=" * 70)
@@ -394,16 +564,17 @@ def main():
     print("=" * 70)
     
     if analysis1 and analysis1.get('crossover_n'):
-        print(f"\n1. For P=4 processes:")
-        print(f"   Communication equals computation at n ≈ {analysis1['crossover_n']:.0f}")
-        print(f"   For n > {analysis1['crossover_n']:.0f}: computation dominates")
-        print(f"   For n < {analysis1['crossover_n']:.0f}: communication dominates")
+        print(f"\n1. Fixed P=4:")
+        print(f"   Crossover at n ≈ {analysis1['crossover_n']:.0f}")
     
     if analysis2 and analysis2.get('crossover_p'):
-        print(f"\n2. For 1000×1000 problem:")
-        print(f"   Communication equals computation at P ≈ {analysis2['crossover_p']:.0f}")
-        print(f"   For P < {analysis2['crossover_p']:.0f}: computation dominates")
-        print(f"   For P > {analysis2['crossover_p']:.0f}: communication dominates")
+        print(f"\n2. Fixed 1000×1000:")
+        print(f"   Crossover at P ≈ {analysis2['crossover_p']:.0f}")
+    
+    if analysis3 and analysis3.get('crossover_points'):
+        print(f"\n3. Surface crossover points:")
+        for n, p in analysis3['crossover_points']:
+            print(f"   n={n}: P_crossover ≈ {p:.1f}")
 
 
 if __name__ == '__main__':

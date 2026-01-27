@@ -86,7 +86,8 @@ def run_experiment(workdir, Px, Py, dim_x, dim_y, output_file):
     # Generate grid
     result = subprocess.run(
         ['./GridDist', str(Px), str(Py), str(dim_x), str(dim_y)],
-        cwd=workdir, capture_output=True, text=True
+        cwd=workdir, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        universal_newlines=True
     )
     if result.returncode != 0:
         print(f"GridDist failed: {result.stderr}")
@@ -95,7 +96,8 @@ def run_experiment(workdir, Px, Py, dim_x, dim_y, output_file):
     # Run solver
     result = subprocess.run(
         ['mpirun', '-np', str(P), './MPI_Fempois', '-t', output_file],
-        cwd=workdir, capture_output=True, text=True
+        cwd=workdir, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        universal_newlines=True
     )
     if result.returncode != 0:
         print(f"MPI_Fempois failed: {result.stderr}")
