@@ -14,7 +14,7 @@ INPUT_FILE="input.dat"
 OUTPUT_DIR="benchmark_results/exchange_analysis"
 
 # Test parameters (same as exercise 1.2.3)
-GRID_SIZES=( 64p 256 512 1024)
+GRID_SIZES=( 64 256 512 1024)
 TOPOLOGIES=("4x1" "2x2")
 NUM_PROCS=4
 MAX_ITER=100          # Fixed iterations for timing

@@ -3,18 +3,17 @@
 Plot Exchange Analysis Results for Exercise 1.2.11
 
 Analyzes Exchange_Borders function to determine:
-- Latency (α): Fixed overhead per communication
-- Bandwidth (β): Data transfer rate
+- Quadratic relationship between data size and exchange time
 - Total data communicated
 
-Uses communication model: t_exchange = α + data_size / β
+Uses quadratic model: t_exchange = a*x² + b*x + c (power law behavior)
 """
 
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
-from scipy import stats
+from scipy import stats"""  """
 
 # Configuration
 RESULTS_FILE = Path("benchmark_results/exchange_analysis/exchange_analysis_results.csv")
@@ -63,10 +62,10 @@ def load_data(filepath: Path) -> pd.DataFrame:
     
     return df_avg
 
-def fit_latency_bandwidth_by_topology(df: pd.DataFrame) -> dict:
+def fit_quadratic_by_topology(df: pd.DataFrame) -> dict:
     """
     Fit per topology (across grid sizes).
-    Model: time = α + (1/β) * data_size
+    Model: time = a*x² + b*x + c (quadratic/parabola)
     """
     results = {}
     
@@ -76,38 +75,35 @@ def fit_latency_bandwidth_by_topology(df: pd.DataFrame) -> dict:
         x = topo_data['data_per_exchange_bytes'].values
         y = topo_data['time_per_exchange_us'].values
         
-        if len(x) < 2:
+        if len(x) < 3:
             continue
             
-        # Linear regression
-        slope, intercept, r_value, p_value, std_err = stats.linregress(x, y)
+        # Quadratic polynomial fit: y = a*x² + b*x + c
+        coeffs = np.polyfit(x, y, 2)
+        a, b, c = coeffs
         
-        # latency (α) = intercept in microseconds
-        latency_us = max(0, intercept)  # Clamp to non-negative
-        
-        # bandwidth: slope = 1/β (us/byte), so β = 1/slope (bytes/us) = 1e6/slope (bytes/s)
-        if slope > 0:
-            bandwidth_bytes_per_s = 1e6 / slope
-            bandwidth_mb_per_s = bandwidth_bytes_per_s / (1024 * 1024)
-        else:
-            bandwidth_bytes_per_s = float('inf')
-            bandwidth_mb_per_s = float('inf')
+        # Calculate R² for the quadratic fit
+        y_pred = np.polyval(coeffs, x)
+        ss_res = np.sum((y - y_pred)**2)
+        ss_tot = np.sum((y - np.mean(y))**2)
+        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
         
         results[topology] = {
-            'latency_us': latency_us,
-            'latency_us_raw': intercept,  # Store raw value for diagnostics
-            'bandwidth_mb_s': bandwidth_mb_per_s,
-            'r_squared': r_value**2,
-            'slope': slope,
+            'a': a,  # quadratic coefficient
+            'b': b,  # linear coefficient
+            'c': c,  # constant (intercept)
+            'coeffs': coeffs,
+            'r_squared': r_squared,
             'data': topo_data
         }
     
     return results
 
-def fit_latency_bandwidth_by_gridsize(df: pd.DataFrame) -> dict:
+def fit_quadratic_by_gridsize(df: pd.DataFrame) -> dict:
     """
     Fit per grid size (across topologies).
     This compares different topologies at the same grid size.
+    Model: time = a*x² + b*x + c (quadratic/parabola)
     """
     results = {}
     
@@ -117,61 +113,59 @@ def fit_latency_bandwidth_by_gridsize(df: pd.DataFrame) -> dict:
         x = grid_data['data_per_exchange_bytes'].values
         y = grid_data['time_per_exchange_us'].values
         
-        if len(x) < 2:
+        if len(x) < 3:
             continue
         
-        # Linear regression
-        slope, intercept, r_value, p_value, std_err = stats.linregress(x, y)
+        # Quadratic polynomial fit: y = a*x² + b*x + c
+        coeffs = np.polyfit(x, y, 2)
+        a, b, c = coeffs
         
-        latency_us = max(0, intercept)
-        
-        if slope > 0:
-            bandwidth_bytes_per_s = 1e6 / slope
-            bandwidth_mb_per_s = bandwidth_bytes_per_s / (1024 * 1024)
-        else:
-            bandwidth_bytes_per_s = float('inf')
-            bandwidth_mb_per_s = float('inf')
+        # Calculate R² for the quadratic fit
+        y_pred = np.polyval(coeffs, x)
+        ss_res = np.sum((y - y_pred)**2)
+        ss_tot = np.sum((y - np.mean(y))**2)
+        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
         
         results[grid_size] = {
-            'latency_us': latency_us,
-            'latency_us_raw': intercept,
-            'bandwidth_mb_s': bandwidth_mb_per_s,
-            'r_squared': r_value**2,
-            'slope': slope,
+            'a': a,
+            'b': b,
+            'c': c,
+            'coeffs': coeffs,
+            'r_squared': r_squared,
             'data': grid_data
         }
     
     return results
 
-def fit_global(df: pd.DataFrame) -> dict:
+def fit_quadratic_global(df: pd.DataFrame) -> dict:
     """
-    Global fit across all data points.
+    Global quadratic fit across all data points.
+    Model: time = a*x² + b*x + c (quadratic/parabola)
     """
     x = df['data_per_exchange_bytes'].values
     y = df['time_per_exchange_us'].values
     
-    slope, intercept, r_value, p_value, std_err = stats.linregress(x, y)
+    # Quadratic polynomial fit: y = a*x² + b*x + c
+    coeffs = np.polyfit(x, y, 2)
+    a, b, c = coeffs
     
-    latency_us = max(0, intercept)
-    
-    if slope > 0:
-        bandwidth_bytes_per_s = 1e6 / slope
-        bandwidth_mb_per_s = bandwidth_bytes_per_s / (1024 * 1024)
-    else:
-        bandwidth_bytes_per_s = float('inf')
-        bandwidth_mb_per_s = float('inf')
+    # Calculate R² for the quadratic fit
+    y_pred = np.polyval(coeffs, x)
+    ss_res = np.sum((y - y_pred)**2)
+    ss_tot = np.sum((y - np.mean(y))**2)
+    r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
     
     return {
-        'latency_us': latency_us,
-        'latency_us_raw': intercept,
-        'bandwidth_mb_s': bandwidth_mb_per_s,
-        'r_squared': r_value**2,
-        'slope': slope
+        'a': a,
+        'b': b,
+        'c': c,
+        'coeffs': coeffs,
+        'r_squared': r_squared
     }
 
 def plot_exchange_time_vs_data(df: pd.DataFrame, fit_by_topo: dict, fit_by_grid: dict, 
                                 fit_global: dict, output_dir: Path):
-    """Simple scatterplot of exchange time vs data size."""
+    """Scatterplot of exchange time vs data size with quadratic fit."""
     fig, ax = plt.subplots(figsize=(10, 7))
     
     colors_topo = {'4x1': 'blue', '2x2': 'red', '1x4': 'green'}
@@ -188,9 +182,17 @@ def plot_exchange_time_vs_data(df: pd.DataFrame, fit_by_topo: dict, fit_by_grid:
                    color=color, marker=marker, s=100, 
                    label=f'{topology}', zorder=5)
     
+    # Plot global quadratic fit curve
+    if 'coeffs' in fit_global:
+        x_fit = np.linspace(df['data_per_exchange_bytes'].min(), 
+                           df['data_per_exchange_bytes'].max(), 100)
+        y_fit = np.polyval(fit_global['coeffs'], x_fit)
+        ax.plot(x_fit, y_fit, 'k--', linewidth=2, 
+                label=f'Quadratic fit (R²={fit_global["r_squared"]:.4f})', zorder=4)
+    
     ax.set_xlabel('Data per Exchange (bytes)', fontsize=12)
     ax.set_ylabel('Time per Exchange (μs)', fontsize=12)
-    ax.set_title('Exercise 1.2.11: Exchange Time vs Data Size', fontsize=14)
+    ax.set_title('Exercise 1.2.11: Exchange Time vs Data Size (Quadratic Fit)', fontsize=14)
     ax.legend(fontsize=10)
     ax.grid(True, alpha=0.3)
     
@@ -324,17 +326,17 @@ def generate_table(df: pd.DataFrame, fit_by_topo: dict, fit_by_grid: dict,
         "",
         r"\begin{table}[htbp]",
         r"\centering",
-        r"\caption{Estimated Latency and Bandwidth by Topology (Exercise 1.2.11)}",
-        r"\label{tab:latency_bandwidth_topo}",
-        r"\begin{tabular}{lrrr}",
+        r"\caption{Quadratic Fit Coefficients by Topology (Exercise 1.2.11): $t = a x^2 + b x + c$}",
+        r"\label{tab:quadratic_fit_topo}",
+        r"\begin{tabular}{lrrrr}",
         r"\hline",
-        r"Topology & Latency $\alpha$ ($\mu$s) & Bandwidth (MB/s) & $R^2$ \\",
+        r"Topology & $a$ (×$10^{-6}$) & $b$ & $c$ ($\mu$s) & $R^2$ \\",
         r"\hline",
     ])
     
     for topology, result in fit_by_topo.items():
         table_lines.append(
-            f"{topology} & {result['latency_us_raw']:.2f} & {result['bandwidth_mb_s']:.2f} & {result['r_squared']:.4f} \\\\"
+            f"{topology} & {result['a']*1e6:.4f} & {result['b']:.6f} & {result['c']:.2f} & {result['r_squared']:.4f} \\\\"
         )
     
     table_lines.extend([
@@ -344,23 +346,23 @@ def generate_table(df: pd.DataFrame, fit_by_topo: dict, fit_by_grid: dict,
         "",
         r"\begin{table}[htbp]",
         r"\centering",
-        r"\caption{Estimated Latency and Bandwidth by Grid Size (Exercise 1.2.11)}",
-        r"\label{tab:latency_bandwidth_grid}",
-        r"\begin{tabular}{lrrr}",
+        r"\caption{Quadratic Fit Coefficients by Grid Size (Exercise 1.2.11)}",
+        r"\label{tab:quadratic_fit_grid}",
+        r"\begin{tabular}{lrrrr}",
         r"\hline",
-        r"Grid Size & Latency $\alpha$ ($\mu$s) & Bandwidth (MB/s) & $R^2$ \\",
+        r"Grid Size & $a$ (×$10^{-6}$) & $b$ & $c$ ($\mu$s) & $R^2$ \\",
         r"\hline",
     ])
     
     for grid_size, result in sorted(fit_by_grid.items()):
         table_lines.append(
-            f"{grid_size}$\\times${grid_size} & {result['latency_us_raw']:.2f} & {result['bandwidth_mb_s']:.2f} & {result['r_squared']:.4f} \\\\"
+            f"{grid_size}$\\times${grid_size} & {result['a']*1e6:.4f} & {result['b']:.6f} & {result['c']:.2f} & {result['r_squared']:.4f} \\\\"
         )
     
     # Add global fit
     table_lines.append(r"\hline")
     table_lines.append(
-        f"Global & {global_fit['latency_us_raw']:.2f} & {global_fit['bandwidth_mb_s']:.2f} & {global_fit['r_squared']:.4f} \\\\"
+        f"Global & {global_fit['a']*1e6:.4f} & {global_fit['b']:.6f} & {global_fit['c']:.2f} & {global_fit['r_squared']:.4f} \\\\"
     )
     
     table_lines.extend([
@@ -389,35 +391,31 @@ def generate_table(df: pd.DataFrame, fit_by_topo: dict, fit_by_grid: dict,
               f"{row['exchange_time']*1000:<12.2f} "
               f"{exch_pct:<8.1f}")
     
-    print("\n" + "="*70)
-    print("Latency-Bandwidth Estimation (by Topology)")
-    print("="*70)
-    print(f"{'Topology':<10} {'Latency (μs)':<18} {'Bandwidth (MB/s)':<18} {'R²':<10}")
-    print("-"*70)
+    print("\n" + "="*90)
+    print("Quadratic Fit (by Topology): t = a*x² + b*x + c")
+    print("="*90)
+    print(f"{'Topology':<10} {'a (×10⁻⁶)':<15} {'b':<15} {'c (μs)':<15} {'R²':<10}")
+    print("-"*90)
     for topology, result in fit_by_topo.items():
-        print(f"{topology:<10} {result['latency_us_raw']:<18.2f} {result['bandwidth_mb_s']:<18.2f} {result['r_squared']:<10.4f}")
+        print(f"{topology:<10} {result['a']*1e6:<15.4f} {result['b']:<15.6f} {result['c']:<15.2f} {result['r_squared']:<10.4f}")
     
-    print("\n" + "="*70)
-    print("Latency-Bandwidth Estimation (by Grid Size)")
-    print("="*70)
-    print(f"{'Grid Size':<12} {'Latency (μs)':<18} {'Bandwidth (MB/s)':<18} {'R²':<10}")
-    print("-"*70)
+    print("\n" + "="*90)
+    print("Quadratic Fit (by Grid Size): t = a*x² + b*x + c")
+    print("="*90)
+    print(f"{'Grid Size':<12} {'a (×10⁻⁶)':<15} {'b':<15} {'c (μs)':<15} {'R²':<10}")
+    print("-"*90)
     for grid_size, result in sorted(fit_by_grid.items()):
-        print(f"{grid_size}x{grid_size:<6} {result['latency_us_raw']:<18.2f} {result['bandwidth_mb_s']:<18.2f} {result['r_squared']:<10.4f}")
+        print(f"{grid_size}x{grid_size:<6} {result['a']*1e6:<15.4f} {result['b']:<15.6f} {result['c']:<15.2f} {result['r_squared']:<10.4f}")
     
-    print("\n" + "="*70)
-    print("Global Fit")
-    print("="*70)
-    print(f"Latency (α): {global_fit['latency_us_raw']:.2f} μs")
-    print(f"Bandwidth:   {global_fit['bandwidth_mb_s']:.2f} MB/s")
-    print(f"R²:          {global_fit['r_squared']:.4f}")
+    print("\n" + "="*90)
+    print("Global Quadratic Fit: t = a*x² + b*x + c")
+    print("="*90)
+    print(f"a (quadratic): {global_fit['a']:.10f} μs/byte²")
+    print(f"b (linear):    {global_fit['b']:.6f} μs/byte")
+    print(f"c (constant):  {global_fit['c']:.2f} μs")
+    print(f"R²:            {global_fit['r_squared']:.4f}")
     
-    if global_fit['latency_us_raw'] < 0:
-        print("\nNote: Negative latency indicates the linear model may not fit well.")
-        print("This could be due to:")
-        print("  - Measurement noise dominating at small message sizes")
-        print("  - Non-linear effects in the communication")
-        print("  - Overhead being negligible compared to bandwidth-limited time")
+    print("\nNote: Quadratic model captures power-law behavior in communication time.")
 
 def main():
     """Main function."""
@@ -435,10 +433,10 @@ def main():
     print("\nRaw data summary:")
     print(df.to_string())
     
-    print("\nFitting latency-bandwidth model...")
-    fit_by_topo = fit_latency_bandwidth_by_topology(df)
-    fit_by_grid = fit_latency_bandwidth_by_gridsize(df)
-    global_fit_result = fit_global(df)
+    print("\nFitting quadratic model...")
+    fit_by_topo = fit_quadratic_by_topology(df)
+    fit_by_grid = fit_quadratic_by_gridsize(df)
+    global_fit_result = fit_quadratic_global(df)
     
     print("Generating plots...")
     plot_exchange_time_vs_data(df, fit_by_topo, fit_by_grid, global_fit_result, OUTPUT_DIR)
