@@ -1,0 +1,45 @@
+
+Lmod is automatically replacing "2024r1" with "2025".
+
+
+The following have been reloaded with a version change:
+  1) cmake/3.27.7 => cmake/3.30.5     3) ninja/1.11.1 => ninja/1.12.1
+  2) gcc/11.3.0 => gcc/13.3.0         4) openmpi/4.1.6 => openmpi/4.1.7
+
+=== Experiment C: Speedup Analysis ===
+Matrix size: 2000, Block size: 100
+
+The output includes:
+  - cpu_time: CPU execution time
+  - gpu_time_with_memcpy: GPU time including memory transfers
+  - gpu_time_no_memcpy: GPU compute-only time
+  - memcpy_time: Time spent on memory copies
+  - speedup_with_memcpy: CPU_time / GPU_time_with_memcpy
+  - speedup_no_memcpy: CPU_time / GPU_compute_only_time
+
+Matrix size: 2000 x 2000
+Block size: 100 threads
+Max iterations: 100
+Memory mode: Shared
+
+=== CPU Power Method ===
+CPU converged after 14 iterations, lambda = 99987.625000
+CPU runtime: 0.029844 seconds
+
+=== GPU Power Method ===
+GPU: NVIDIA A100 80GB PCIe MIG 1g.10gb (Compute 8.0)
+Shared memory per block: 49152 bytes
+Max threads per block: 1024
+GPU converged after 7 iterations, lambda = 99987.507812
+GPU runtime (with memcpy): 0.088545 seconds
+GPU runtime (compute only): 0.003900 seconds
+Memory transfer time: 0.084645 seconds
+
+=== Performance Summary ===
+Speedup (with memcpy): 0.34x
+Speedup (compute only): 7.65x
+Lambda difference (CPU-GPU): 1.171875e-01
+
+=== CSV_OUTPUT ===
+matrix_size,block_size,memory_mode,cpu_time,gpu_time_with_memcpy,gpu_time_no_memcpy,memcpy_time,speedup_with_memcpy,speedup_no_memcpy,cpu_lambda,gpu_lambda,cpu_iterations,gpu_iterations
+2000,100,shared,0.029844,0.088545,0.003900,0.084645,0.337052,7.652409,99987.625000,99987.507812,100,7

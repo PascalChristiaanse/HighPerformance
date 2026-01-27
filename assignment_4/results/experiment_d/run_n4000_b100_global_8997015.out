@@ -1,0 +1,37 @@
+
+Lmod is automatically replacing "2024r1" with "2025".
+
+
+The following have been reloaded with a version change:
+  1) cmake/3.27.7 => cmake/3.30.5     3) ninja/1.11.1 => ninja/1.12.1
+  2) gcc/11.3.0 => gcc/13.3.0         4) openmpi/4.1.6 => openmpi/4.1.7
+
+=== Experiment D: Memory Type Comparison ===
+Matrix size: 4000, Block size: 100, Memory: global
+
+Matrix size: 4000 x 4000
+Block size: 100 threads
+Max iterations: 100
+Memory mode: Global
+
+=== CPU Power Method ===
+CPU converged after 22 iterations, lambda = 199987.656250
+CPU runtime: 0.216662 seconds
+
+=== GPU Power Method ===
+GPU: NVIDIA A100 80GB PCIe MIG 1g.10gb (Compute 8.0)
+Shared memory per block: 49152 bytes
+Max threads per block: 1024
+GPU converged after 17 iterations, lambda = 199987.609375
+GPU runtime (with memcpy): 0.112108 seconds
+GPU runtime (compute only): 0.018095 seconds
+Memory transfer time: 0.094013 seconds
+
+=== Performance Summary ===
+Speedup (with memcpy): 1.93x
+Speedup (compute only): 11.97x
+Lambda difference (CPU-GPU): 4.687500e-02
+
+=== CSV_OUTPUT ===
+matrix_size,block_size,memory_mode,cpu_time,gpu_time_with_memcpy,gpu_time_no_memcpy,memcpy_time,speedup_with_memcpy,speedup_no_memcpy,cpu_lambda,gpu_lambda,cpu_iterations,gpu_iterations
+4000,100,global,0.216662,0.112108,0.018095,0.094013,1.932627,11.973847,199987.656250,199987.609375,100,17
