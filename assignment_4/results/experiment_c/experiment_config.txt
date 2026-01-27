@@ -1,0 +1,13 @@
+Experiment C Configuration
+========================================
+Matrix sizes: [50, 500, 2000, 4000]
+Block sizes: [32, 64, 100]
+Max iterations: 100
+Memory mode: shared
+Total experiments: 12
+
+Speedup metrics:
+  (i)  speedup_no_memcpy = cpu_time / gpu_time_no_memcpy
+  (ii) speedup_with_memcpy = cpu_time / gpu_time_with_memcpy
+
+Job IDs: 8996977, 8996978, 8996979, 8996980, 8996981, 8996982, 8996983, 8996984, 8996985, 8996986, 8996987, 8996988

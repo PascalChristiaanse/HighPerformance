@@ -1,0 +1,39 @@
+============================================================
+Experiment C: Speedup Analysis Summary
+============================================================
+
+Overall Statistics:
+----------------------------------------
+Speedup (excluding memcpy):
+  Min: 0.00x
+  Max: 23.47x
+  Avg: 7.05x
+
+Speedup (including memcpy):
+  Min: 0.00x
+  Max: 2.13x
+  Avg: 0.61x
+
+Memory copy overhead:
+  Min: 67.9%
+  Max: 98.4%
+  Avg: 92.6%
+
+Best Configurations:
+----------------------------------------
+Best speedup (including memcpy): 2.13x
+  Matrix size: 4000, Block size: 32
+
+Best speedup (excluding memcpy): 23.47x
+  Matrix size: 4000, Block size: 100
+
+Key Observations:
+----------------------------------------
+1. The difference between speedup (i) and (ii) shows the impact
+   of memory transfer overhead on overall performance.
+
+2. For small matrices, memory copy overhead is typically higher
+   relative to computation time.
+
+3. As matrix size increases, the compute-to-transfer ratio
+   improves, making GPU acceleration more beneficial.

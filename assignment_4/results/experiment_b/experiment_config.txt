@@ -1,0 +1,8 @@
+Experiment B Configuration
+========================================
+Matrix sizes: [50, 500, 2000, 4000]
+Block sizes: [32, 64, 100]
+Max iterations: 100
+Memory mode: shared
+Total experiments: 12
+Job IDs: 8996916, 8996917, 8996918, 8996919, 8996920, 8996921, 8996922, 8996923, 8996924, 8996925, 8996926, 8996927

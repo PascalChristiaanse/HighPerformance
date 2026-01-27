@@ -1,0 +1,12 @@
+Experiment D Configuration
+========================================
+Matrix sizes: [50, 500, 2000, 4000]
+Block sizes: [32, 64, 100]
+Memory modes: global (0), shared (1)
+Max iterations: 100
+Total experiments: 24
+
+Purpose: Compare performance of shared vs global memory
+in the matrix-vector multiplication kernel.
+
+Job IDs: 8996993, 8996994, 8996995, 8996996, 8996997, 8996998, 8996999, 8997000, 8997001, 8997002, 8997003, 8997004, 8997005, 8997006, 8997007, 8997008, 8997009, 8997010, 8997011, 8997012, 8997013, 8997014, 8997015, 8997016

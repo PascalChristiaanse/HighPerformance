@@ -1,0 +1,135 @@
+======================================================================
+Experiment D: Performance Analysis - Shared vs Global Memory
+======================================================================
+
+SUMMARY STATISTICS
+----------------------------------------
+Shared memory speedup over global:
+  Minimum: 0.66x
+  Maximum: 2.08x
+  Average: 1.10x
+
+Time saved by using shared memory:
+  Minimum: -50.8%
+  Maximum: 51.9%
+  Average: -0.4%
+
+======================================================================
+EXPLANATION OF PERFORMANCE DIFFERENCES
+======================================================================
+
+1. MEMORY HIERARCHY IN GPUs
+----------------------------------------
+
+GPUs have a hierarchical memory system with varying access speeds:
+
+  - Global Memory: Large capacity (GBs) but high latency (~400-600 cycles)
+    * All threads can access
+    * Main memory for GPU computation
+    
+  - Shared Memory: Small capacity (48-96 KB per SM) but very fast (~1-4 cycles)
+    * Shared among threads in a block
+    * Programmer-managed cache
+    
+  - Registers: Fastest but very limited
+    * Private to each thread
+
+For the NVIDIA A100 GPU (used in experiments):
+  - Global memory bandwidth: ~2 TB/s
+  - Shared memory bandwidth: ~19 TB/s per SM
+  - L1 cache: 192 KB per SM
+  - L2 cache: 80 MB total
+
+2. WHY SHARED MEMORY IS FASTER FOR MATRIX-VECTOR MULTIPLICATION
+----------------------------------------
+
+Matrix-vector multiplication (y = A * x) requires:
+  - Each row of A to be read once
+  - Vector x to be read N times (once per row)
+
+Global Memory Approach:
+  - Each thread reads a row of A from global memory
+  - Each thread reads the ENTIRE vector x from global memory
+  - Total global memory reads: N² (for A) + N² (for x, read N times)
+  - High memory traffic and latency
+
+Shared Memory (Tiled) Approach:
+  - Matrix A is divided into tiles of size BLOCK_SIZE × BLOCK_SIZE
+  - Each tile of A and corresponding portion of x loaded to shared memory
+  - Threads in a block cooperatively load data (coalesced access)
+  - Multiple reuse of data in shared memory
+  - Reduced global memory traffic
+
+Benefits of tiling:
+  a) Data reuse: Vector x portions are loaded once per tile, used by all rows
+  b) Coalesced memory access: Adjacent threads access adjacent memory
+  c) Reduced memory bandwidth pressure on global memory
+  d) Lower latency for repeated accesses
+
+3. FACTORS AFFECTING PERFORMANCE DIFFERENCE
+----------------------------------------
+
+Several factors influence how much faster shared memory is:
+
+a) Matrix Size (N):
+   - Larger matrices benefit MORE from shared memory
+   - More data reuse opportunities
+   - Global memory becomes the bottleneck for large N
+
+b) Block Size:
+   - Affects tile size and data reuse
+   - Must balance between parallelism and shared memory capacity
+   - Optimal block size depends on matrix size and GPU architecture
+
+c) Memory Access Patterns:
+   - Global memory is fastest with coalesced access
+   - Shared memory has bank conflicts to consider
+   - Well-designed tiling avoids bank conflicts
+
+d) Occupancy:
+   - Shared memory usage limits blocks per SM
+   - Trade-off between shared memory benefit and parallelism
+
+4. OBSERVATIONS FROM EXPERIMENTAL RESULTS
+----------------------------------------
+
+Best case for shared memory:
+  - Matrix size: 4000
+  - Block size: 64
+  - Speedup: 2.08x
+  - Time saved: 51.9%
+
+Smallest improvement:
+  - Matrix size: 500
+  - Block size: 64
+  - Speedup: 0.66x
+  - Time saved: -50.8%
+
+5. RECOMMENDATIONS
+----------------------------------------
+
+Based on the analysis:
+
+1. Always use shared memory for matrix operations when possible
+   - The programming complexity is justified by performance gains
+
+2. For small matrices (N < 100):
+   - Shared memory benefit may be limited
+   - Consider whether GPU is even beneficial (memory transfer overhead)
+
+3. For large matrices (N > 1000):
+   - Shared memory is essential for good performance
+   - Consider multiple levels of tiling for very large matrices
+
+4. Block size selection:
+   - 32 threads (one warp) is a good baseline
+   - Larger blocks may improve data reuse but limit occupancy
+   - Experiment with 32, 64, 128 for best performance
+
+5. Memory transfer considerations:
+   - For problems where data is already on GPU, shared memory helps most
+   - For one-time computations, memory transfer may dominate runtime
+
+======================================================================
+END OF ANALYSIS
+======================================================================
