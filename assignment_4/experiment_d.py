@@ -29,16 +29,15 @@ SLURM_TEMPLATE = """#!/bin/bash
 #SBATCH --job-name=exp_d_n{size}_b{blocksize}_{mem_name}
 #SBATCH --time=00:10:00
 #SBATCH --partition=gpu-a100-small
-#SBATCH --gres=gpu
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --gpus-per-task=1
-#SBATCH --mem-per-cpu=8GB
+#SBATCH --mem-per-cpu=1GB
 #SBATCH --account=Education-EEMCS-Courses-WI4049TU
 #SBATCH --output={results_dir}/run_n{size}_b{blocksize}_{mem_name}_%j.out
 
 # Load required modules
-module load 2024r1 nvhpc
+module load 2025 cuda/12 gcc
 
 # Run experiment
 echo "=== Experiment D: Memory Type Comparison ==="
@@ -91,8 +90,9 @@ def submit_job(script_path):
     try:
         result = subprocess.run(
             ['sbatch', str(script_path)],
-            capture_output=True,
-            text=True
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True
         )
         if result.returncode == 0:
             job_id = result.stdout.strip().split()[-1]
