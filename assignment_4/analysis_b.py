@@ -177,12 +177,14 @@ def create_plots(results, output_dir):
             by_block_size[b] = []
         by_block_size[b].append(r)
     
-    # Plot 1: Execution time vs Matrix Size (grouped by block size)
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    # Quarter A4 page size: A4 is 8.27" x 11.69", quarter is approximately 4.13" x 2.92"
+    # For nice text fitting, use a slightly adjusted size
+    figsize = (4.13, 4.13)
     
-    # CPU vs GPU time
-    ax1 = axes[0]
     block_sizes = sorted(by_block_size.keys())
+    
+    # Plot 1: Execution time vs Matrix Size (CPU vs GPU time)
+    fig1, ax1 = plt.subplots(figsize=figsize)
     
     for bs in block_sizes:
         data = sorted(by_block_size[bs], key=lambda x: x.get('matrix_size', 0))
@@ -195,14 +197,20 @@ def create_plots(results, output_dir):
     
     ax1.set_xlabel('Matrix Size (N)')
     ax1.set_ylabel('Execution Time (seconds)')
-    ax1.set_title('Execution Time vs Matrix Size')
     ax1.legend(fontsize=8)
     ax1.grid(True, alpha=0.3)
-    ax1.set_xscale('log')
+    # ax1.set_xscale('log')
     ax1.set_yscale('log')
     
-    # Speedup vs Matrix Size
-    ax2 = axes[1]
+    plt.tight_layout()
+    plot_path = output_path / "experiment_b_exec_time_vs_matrix_size.png"
+    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+    print(f"Plot saved to: {plot_path}")
+    plt.close()
+    
+    # Plot 2: Speedup vs Matrix Size
+    fig2, ax2 = plt.subplots(figsize=figsize)
+    
     for bs in block_sizes:
         data = sorted(by_block_size[bs], key=lambda x: x.get('matrix_size', 0))
         sizes = [d['matrix_size'] for d in data]
@@ -214,21 +222,18 @@ def create_plots(results, output_dir):
     
     ax2.set_xlabel('Matrix Size (N)')
     ax2.set_ylabel('Speedup (CPU time / GPU time)')
-    ax2.set_title('GPU Speedup vs Matrix Size')
     ax2.legend(fontsize=8)
     ax2.grid(True, alpha=0.3)
     ax2.axhline(y=1, color='r', linestyle=':', label='No speedup')
     
     plt.tight_layout()
-    plot_path = output_path / "experiment_b_matrix_size.png"
+    plot_path = output_path / "experiment_b_speedup_vs_matrix_size.png"
     plt.savefig(plot_path, dpi=150, bbox_inches='tight')
     print(f"Plot saved to: {plot_path}")
     plt.close()
     
-    # Plot 2: Execution time vs Block Size (grouped by matrix size)
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    
-    ax1 = axes[0]
+    # Plot 3: GPU Time vs Block Size (grouped by matrix size)
+    fig3, ax3 = plt.subplots(figsize=figsize)
     matrix_sizes = sorted(by_matrix_size.keys())
     
     for n in matrix_sizes:
@@ -236,33 +241,146 @@ def create_plots(results, output_dir):
         blocks = [d['block_size'] for d in data]
         gpu_times = [d['gpu_time_with_memcpy'] for d in data]
         
-        ax1.plot(blocks, gpu_times, 'o-', label=f'N={n}')
+        ax3.plot(blocks, gpu_times, 'o-', label=f'N={n}')
     
-    ax1.set_xlabel('Block Size (threads per block)')
-    ax1.set_ylabel('GPU Execution Time (seconds)')
-    ax1.set_title('GPU Time vs Block Size')
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
+    ax3.set_xlabel('Block Size (threads per block)')
+    ax3.set_ylabel('GPU Execution Time (seconds)')
+    ax3.legend()
+    ax3.grid(True, alpha=0.3)
     
-    ax2 = axes[1]
+    plt.tight_layout()
+    plot_path = output_path / "experiment_b_gpu_time_vs_block_size.png"
+    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+    print(f"Plot saved to: {plot_path}")
+    plt.close()
+    
+    # Plot 4: Speedup vs Block Size
+    fig4, ax4 = plt.subplots(figsize=figsize)
+    
     for n in matrix_sizes:
         data = sorted(by_matrix_size[n], key=lambda x: x.get('block_size', 0))
         blocks = [d['block_size'] for d in data]
         speedup = [d['speedup_with_memcpy'] for d in data]
         
-        ax2.plot(blocks, speedup, 'o-', label=f'N={n}')
+        ax4.plot(blocks, speedup, 'o-', label=f'N={n}')
     
-    ax2.set_xlabel('Block Size (threads per block)')
-    ax2.set_ylabel('Speedup')
-    ax2.set_title('Speedup vs Block Size')
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
-    ax2.axhline(y=1, color='r', linestyle=':', alpha=0.5)
+    ax4.set_xlabel('Block Size (threads per block)')
+    ax4.set_ylabel('Speedup')
+    ax4.legend()
+    ax4.grid(True, alpha=0.3)
+    ax4.axhline(y=1, color='r', linestyle=':', alpha=0.5)
     
     plt.tight_layout()
-    plot_path = output_path / "experiment_b_block_size.png"
+    plot_path = output_path / "experiment_b_speedup_vs_block_size.png"
     plt.savefig(plot_path, dpi=150, bbox_inches='tight')
     print(f"Plot saved to: {plot_path}")
+    plt.close()
+
+
+def create_surface_plots(results, output_dir):
+    """Create 3D surface plots for performance vs matrix size and block size."""
+    if not HAS_MATPLOTLIB:
+        print("Skipping surface plots (matplotlib not available)")
+        return
+    
+    if not results:
+        print("No results for surface plots.")
+        return
+    
+    try:
+        from mpl_toolkits.mplot3d import Axes3D
+        import numpy as np
+    except ImportError:
+        print("Skipping surface plots (numpy or mplot3d not available)")
+        return
+    
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    # Extract unique values
+    matrix_sizes = sorted(set(r['matrix_size'] for r in results))
+    block_sizes = sorted(set(r['block_size'] for r in results))
+    
+    if len(matrix_sizes) < 2 or len(block_sizes) < 2:
+        print("Not enough data points for surface plot")
+        return
+    
+    # Create meshgrid
+    X, Y = np.meshgrid(block_sizes, matrix_sizes)
+    
+    # Create Z arrays for different metrics
+    Z_gpu_time = np.zeros_like(X, dtype=float)
+    Z_speedup = np.zeros_like(X, dtype=float)
+    Z_speedup_no_mem = np.zeros_like(X, dtype=float)
+    
+    for r in results:
+        i = matrix_sizes.index(r['matrix_size'])
+        j = block_sizes.index(r['block_size'])
+        Z_gpu_time[i, j] = r.get('gpu_time_with_memcpy', 0)
+        Z_speedup[i, j] = r.get('speedup_with_memcpy', 0)
+        Z_speedup_no_mem[i, j] = r.get('speedup_no_memcpy', 0)
+    
+    # Quarter A4 page size
+    figsize = (4.13, 2.92)
+    
+    # Surface plot 1: GPU Time
+    fig1 = plt.figure(figsize=figsize)
+    ax1 = fig1.add_subplot(111, projection='3d')
+    surf1 = ax1.plot_surface(X, Y, Z_gpu_time, cmap='viridis', alpha=0.8)
+    ax1.set_xlabel('Block Size')
+    ax1.set_ylabel('Matrix Size (N)')
+    ax1.set_zlabel('GPU Time (s)')
+    fig1.colorbar(surf1, ax=ax1, shrink=0.5, aspect=10)
+    
+    plt.tight_layout()
+    plot_path = output_path / "experiment_b_surface_gpu_time.png"
+    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+    print(f"Surface plot saved to: {plot_path}")
+    plt.close()
+    
+    # Surface plot 2: Speedup with memcpy
+    fig2 = plt.figure(figsize=figsize)
+    ax2 = fig2.add_subplot(111, projection='3d')
+    surf2 = ax2.plot_surface(X, Y, Z_speedup, cmap='plasma', alpha=0.8)
+    ax2.set_xlabel('Block Size')
+    ax2.set_ylabel('Matrix Size (N)')
+    ax2.set_zlabel('Speedup')
+    fig2.colorbar(surf2, ax=ax2, shrink=0.5, aspect=10)
+    
+    plt.tight_layout()
+    plot_path = output_path / "experiment_b_surface_speedup_memcpy.png"
+    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+    print(f"Surface plot saved to: {plot_path}")
+    plt.close()
+    
+    # Surface plot 3: Speedup including memcpy (coolwarm)
+    fig3 = plt.figure(figsize=figsize)
+    ax3 = fig3.add_subplot(111, projection='3d')
+    surf3 = ax3.plot_surface(X, Y, Z_speedup, cmap='coolwarm', alpha=0.8)
+    ax3.set_xlabel('Block Size')
+    ax3.set_ylabel('Matrix Size (N)')
+    ax3.set_zlabel('Speedup')
+    fig3.colorbar(surf3, ax=ax3, shrink=0.5, aspect=10)
+    
+    plt.tight_layout()
+    plot_path = output_path / "experiment_b_surface_speedup_with_memcpy.png"
+    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+    print(f"Speedup surface plot saved to: {plot_path}")
+    plt.close()
+    
+    # Surface plot 4: Speedup compute only
+    fig4 = plt.figure(figsize=figsize)
+    ax4 = fig4.add_subplot(111, projection='3d')
+    surf4 = ax4.plot_surface(X, Y, Z_speedup_no_mem, cmap='coolwarm', alpha=0.8)
+    ax4.set_xlabel('Block Size')
+    ax4.set_ylabel('Matrix Size (N)')
+    ax4.set_zlabel('Speedup')
+    fig4.colorbar(surf4, ax=ax4, shrink=0.5, aspect=10)
+    
+    plt.tight_layout()
+    plot_path = output_path / "experiment_b_surface_speedup_compute_only.png"
+    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+    print(f"Speedup surface plot saved to: {plot_path}")
     plt.close()
 
 
@@ -296,6 +414,10 @@ def main():
     # Create plots
     print("\nGenerating plots...")
     create_plots(results, args.output_dir)
+    
+    # Create surface plots
+    print("\nGenerating surface plots...")
+    create_surface_plots(results, args.output_dir)
     
     print("\n" + "=" * 60)
     print("Analysis complete!")

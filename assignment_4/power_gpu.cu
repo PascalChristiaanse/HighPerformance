@@ -15,6 +15,7 @@ int BlockSize = 32;            // Number of threads per block
 const float EPS = 0.000005f;   // Convergence tolerance
 int max_iteration = 100;       // Maximum iteration steps
 int UseSharedMemory = 1;       // 1 = use shared memory, 0 = use global memory
+int UseUnifiedMemory = 0;      // 1 = use unified memory (cudaMallocManaged), 0 = manual transfers
 
 // Host arrays
 float* h_MatA = NULL;
@@ -250,7 +251,8 @@ int main(int argc, char** argv)
     printf("Matrix size: %d x %d\n", N, N);
     printf("Block size: %d threads\n", BlockSize);
     printf("Max iterations: %d\n", max_iteration);
-    printf("Memory mode: %s\n", UseSharedMemory ? "Shared" : "Global");
+    printf("Kernel mode: %s\n", UseSharedMemory ? "Shared" : "Global");
+    printf("Memory management: %s\n", UseUnifiedMemory ? "Unified (cudaMallocManaged)" : "Manual transfers");
     
     size_t vec_size = N * sizeof(float);
     size_t mat_size = N * N * sizeof(float);
@@ -301,17 +303,43 @@ int main(int argc, char** argv)
     // Start total GPU timing (including memory transfers)
     clock_gettime(CLOCK_REALTIME, &t_start);
     
-    // Allocate device memory
+    // Allocate device memory (unified or manual)
     clock_gettime(CLOCK_REALTIME, &t_mem_start);
-    cudaMalloc((void**)&d_MatA, mat_size);
-    cudaMalloc((void**)&d_VecV, vec_size);
-    cudaMalloc((void**)&d_VecW, vec_size);
-    cudaMalloc((void**)&d_NormW, scalar_size);
-    cudaMalloc((void**)&d_Lamda, scalar_size);
     
-    // Copy data to device
-    cudaMemcpy(d_MatA, h_MatA, mat_size, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_VecV, h_VecV, vec_size, cudaMemcpyHostToDevice);
+    if (UseUnifiedMemory)
+    {
+        // Unified Memory: allocate managed memory accessible by both CPU and GPU
+        cudaMallocManaged((void**)&d_MatA, mat_size);
+        cudaMallocManaged((void**)&d_VecV, vec_size);
+        cudaMallocManaged((void**)&d_VecW, vec_size);
+        cudaMallocManaged((void**)&d_NormW, scalar_size);
+        cudaMallocManaged((void**)&d_Lamda, scalar_size);
+        
+        // Copy data directly to unified memory (replaces host arrays)
+        memcpy(d_MatA, h_MatA, mat_size);
+        memcpy(d_VecV, h_VecV, vec_size);
+        
+        // Prefetch to GPU for better initial performance
+        int device;
+        cudaGetDevice(&device);
+        cudaMemPrefetchAsync(d_MatA, mat_size, device);
+        cudaMemPrefetchAsync(d_VecV, vec_size, device);
+        cudaDeviceSynchronize();
+    }
+    else
+    {
+        // Manual memory management
+        cudaMalloc((void**)&d_MatA, mat_size);
+        cudaMalloc((void**)&d_VecV, vec_size);
+        cudaMalloc((void**)&d_VecW, vec_size);
+        cudaMalloc((void**)&d_NormW, scalar_size);
+        cudaMalloc((void**)&d_Lamda, scalar_size);
+        
+        // Copy data to device
+        cudaMemcpy(d_MatA, h_MatA, mat_size, cudaMemcpyHostToDevice);
+        cudaMemcpy(d_VecV, h_VecV, vec_size, cudaMemcpyHostToDevice);
+    }
+    
     clock_gettime(CLOCK_REALTIME, &t_mem_end);
     memcpy_time = (t_mem_end.tv_sec - t_mem_start.tv_sec) + 1e-9 * (t_mem_end.tv_nsec - t_mem_start.tv_nsec);
     
@@ -340,8 +368,13 @@ int main(int argc, char** argv)
         cudaDeviceSynchronize();
         
         // Copy norm to host and compute sqrt
-        cudaMemcpy(h_NormW, d_NormW, scalar_size, cudaMemcpyDeviceToHost);
-        normW = sqrtf(*h_NormW);
+        if (UseUnifiedMemory)
+            normW = sqrtf(*d_NormW);  // Direct access with unified memory
+        else
+        {
+            cudaMemcpy(h_NormW, d_NormW, scalar_size, cudaMemcpyDeviceToHost);
+            normW = sqrtf(*h_NormW);
+        }
         
         // Step 2: Normalize W into V
         NormalizeW<<<blocksPerGrid, threadsPerBlock>>>(d_VecV, d_VecW, normW, N);
@@ -360,7 +393,10 @@ int main(int argc, char** argv)
         cudaDeviceSynchronize();
         
         // Copy lambda to host
-        cudaMemcpy(&lamda, d_Lamda, scalar_size, cudaMemcpyDeviceToHost);
+        if (UseUnifiedMemory)
+            lamda = *d_Lamda;  // Direct access with unified memory
+        else
+            cudaMemcpy(&lamda, d_Lamda, scalar_size, cudaMemcpyDeviceToHost);
         
         gpu_iterations = i + 1;
         
@@ -394,10 +430,11 @@ int main(int argc, char** argv)
     printf("Lambda difference (CPU-GPU): %e\n", fabsf(cpu_lamda - lamda));
     
     // CSV output for automated parsing
+    const char* mem_mgmt = UseUnifiedMemory ? "unified" : "manual";
     printf("\n=== CSV_OUTPUT ===\n");
-    printf("matrix_size,block_size,memory_mode,cpu_time,gpu_time_with_memcpy,gpu_time_no_memcpy,memcpy_time,speedup_with_memcpy,speedup_no_memcpy,cpu_lambda,gpu_lambda,cpu_iterations,gpu_iterations\n");
-    printf("%d,%d,%s,%f,%f,%f,%f,%f,%f,%f,%f,%d,%d\n",
-           N, BlockSize, UseSharedMemory ? "shared" : "global",
+    printf("matrix_size,block_size,memory_mode,memory_mgmt,cpu_time,gpu_time_with_memcpy,gpu_time_no_memcpy,memcpy_time,speedup_with_memcpy,speedup_no_memcpy,cpu_lambda,gpu_lambda,cpu_iterations,gpu_iterations\n");
+    printf("%d,%d,%s,%s,%f,%f,%f,%f,%f,%f,%f,%f,%d,%d\n",
+           N, BlockSize, UseSharedMemory ? "shared" : "global", mem_mgmt,
            cpu_runtime, gpu_runtime, gpu_runtime_no_memcpy, memcpy_time,
            speedup_with_memcpy, speedup_no_memcpy,
            cpu_lamda, lamda, max_iteration, gpu_iterations);
@@ -466,6 +503,12 @@ void Arguments(int argc, char** argv)
             if (i + 1 < argc)
                 UseSharedMemory = atoi(argv[++i]);
         }
+        else if (strcmp(argv[i], "--use_unified") == 0 || strcmp(argv[i], "-use_unified") == 0 ||
+                 strcmp(argv[i], "-u") == 0 || strcmp(argv[i], "--u") == 0)
+        {
+            if (i + 1 < argc)
+                UseUnifiedMemory = atoi(argv[++i]);
+        }
         else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0)
         {
             printf("Usage: %s [options]\n", argv[0]);
@@ -474,6 +517,7 @@ void Arguments(int argc, char** argv)
             printf("  --blocksize, -b B      Threads per block, default: 32\n");
             printf("  --max_iteration, -m M  Max iterations, default: 100\n");
             printf("  --use_shared, -s [0|1] Use shared memory (1) or global (0), default: 1\n");
+            printf("  --use_unified, -u [0|1] Use unified memory (1) or manual transfers (0), default: 0\n");
             printf("  --help, -h             Show this help\n");
             exit(0);
         }

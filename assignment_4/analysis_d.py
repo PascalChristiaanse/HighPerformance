@@ -277,6 +277,83 @@ def create_comparison_plots(results, comparisons, output_dir):
     plt.close()
 
 
+def create_surface_plots(comparisons, output_dir):
+    """Create 3D surface plots for memory comparison vs matrix size and block size."""
+    if not HAS_MATPLOTLIB:
+        print("Skipping surface plots (matplotlib not available)")
+        return
+    
+    if not comparisons:
+        print("No comparison data for surface plots.")
+        return
+    
+    try:
+        from mpl_toolkits.mplot3d import Axes3D
+        import numpy as np
+    except ImportError:
+        print("Skipping surface plots (numpy or mplot3d not available)")
+        return
+    
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    # Extract unique values
+    matrix_sizes = sorted(set(r['matrix_size'] for r in comparisons))
+    block_sizes = sorted(set(r['block_size'] for r in comparisons))
+    
+    if len(matrix_sizes) < 2 or len(block_sizes) < 2:
+        print("Not enough data points for surface plot")
+        return
+    
+    # Create meshgrid
+    X, Y = np.meshgrid(block_sizes, matrix_sizes)
+    
+    # Create Z arrays
+    Z_global = np.zeros_like(X, dtype=float)
+    Z_shared = np.zeros_like(X, dtype=float)
+    Z_advantage = np.zeros_like(X, dtype=float)
+    
+    for r in comparisons:
+        i = matrix_sizes.index(r['matrix_size'])
+        j = block_sizes.index(r['block_size'])
+        Z_global[i, j] = r.get('gpu_time_global', 0)
+        Z_shared[i, j] = r.get('gpu_time_shared', 0)
+        Z_advantage[i, j] = r.get('shared_advantage', 1)
+    
+    # Surface plot: Memory type comparison
+    fig = plt.figure(figsize=(16, 5))
+    
+    ax1 = fig.add_subplot(131, projection='3d')
+    surf1 = ax1.plot_surface(X, Y, Z_global, cmap='Reds', alpha=0.8)
+    ax1.set_xlabel('Block Size')
+    ax1.set_ylabel('Matrix Size (N)')
+    ax1.set_zlabel('Time (s)')
+    ax1.set_title('Global Memory Time')
+    fig.colorbar(surf1, ax=ax1, shrink=0.5, aspect=10)
+    
+    ax2 = fig.add_subplot(132, projection='3d')
+    surf2 = ax2.plot_surface(X, Y, Z_shared, cmap='Blues', alpha=0.8)
+    ax2.set_xlabel('Block Size')
+    ax2.set_ylabel('Matrix Size (N)')
+    ax2.set_zlabel('Time (s)')
+    ax2.set_title('Shared Memory Time')
+    fig.colorbar(surf2, ax=ax2, shrink=0.5, aspect=10)
+    
+    ax3 = fig.add_subplot(133, projection='3d')
+    surf3 = ax3.plot_surface(X, Y, Z_advantage, cmap='RdYlGn', alpha=0.8)
+    ax3.set_xlabel('Block Size')
+    ax3.set_ylabel('Matrix Size (N)')
+    ax3.set_zlabel('Speedup')
+    ax3.set_title('Shared Memory Advantage')
+    fig.colorbar(surf3, ax=ax3, shrink=0.5, aspect=10)
+    
+    plt.tight_layout()
+    plot_path = output_path / "experiment_d_surface.png"
+    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+    print(f"Surface plot saved to: {plot_path}")
+    plt.close()
+
+
 def generate_explanation(comparisons, output_dir):
     """Generate detailed explanation of performance differences."""
     if not comparisons:
@@ -477,6 +554,10 @@ def main():
     # Create plots
     print("\nGenerating plots...")
     create_comparison_plots(results, comparisons, args.output_dir)
+    
+    # Create surface plots
+    print("\nGenerating surface plots...")
+    create_surface_plots(comparisons, args.output_dir)
     
     # Generate explanation
     print("\nGenerating performance explanation...")

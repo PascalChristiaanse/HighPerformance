@@ -86,7 +86,21 @@ The `power_gpu` program accepts the following arguments:
 | `--blocksize` | `-b` | Threads per block | 32 |
 | `--max_iteration` | `-m` | Maximum iterations | 100 |
 | `--use_shared` | `-s` | Use shared memory (1) or global (0) | 1 |
+| `--use_unified` | `-u` | Use unified memory (1) or manual (0) | 0 |
 | `--help` | `-h` | Show help message | - |
+
+### Memory Management Modes
+
+- **Manual (default)**: Uses `cudaMalloc` and `cudaMemcpy` for explicit memory transfers
+- **Unified Memory**: Uses `cudaMallocManaged` for automatic memory management
+
+```bash
+# Manual memory management (default)
+./power_gpu --size 2000 --use_unified 0
+
+# Unified memory (cudaMallocManaged)
+./power_gpu --size 2000 --use_unified 1
+```
 
 ## Output Format
 
