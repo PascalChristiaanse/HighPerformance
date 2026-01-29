@@ -1,0 +1,19 @@
+Experiment C Configuration: Three Memory Types Comparison
+=======================================================
+
+Matrix sizes: [50, 500, 2000, 4000]
+Block sizes: [32, 64, 100]
+Max iterations: 100
+Total experiments: 36
+
+Memory Types:
+  1. GLOBAL (12 jobs) - use_shared=0, use_unified=0
+     Kernel: Av_Product_Global (direct VRAM access)
+  2. SHARED (12 jobs) - use_shared=1, use_unified=0
+     Kernel: Av_Product_Shared (tiled with on-chip shared memory)
+  3. UNIFIED (12 jobs) - use_shared=1, use_unified=1
+     Allocation: cudaMallocManaged (automatic migration)
+
+Speedup = CPU_time / GPU_time_with_memcpy
+
+Job IDs: 9009419, 9009420, 9009421, 9009422, 9009423, 9009424, 9009425, 9009426, 9009428, 9009429, 9009430, 9009431, 9009432, 9009433, 9009434, 9009435, 9009436, 9009437, 9009438, 9009439, 9009440, 9009441, 9009442, 9009443, 9009444, 9009445, 9009446, 9009447, 9009448, 9009449, 9009450, 9009451, 9009452, 9009453, 9009454, 9009455
