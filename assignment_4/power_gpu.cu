@@ -42,49 +42,40 @@ void checkCardVersion(void);
 // ============================================================================
 
 // Matrix-Vector Product using Shared Memory (tiled approach)
+// Each thread computes one element of the result vector W[row] = sum(A[row,j] * V[j])
 __global__ void Av_Product_Shared(float* g_MatA, float* g_VecV, float* g_VecW, int N, int blockSize)
 {
     extern __shared__ float sharedMem[];
-    float* As = sharedMem;
-    float* bs = &sharedMem[blockSize * blockSize];
+    float* Vs = sharedMem;  // Tile of vector V (blockSize elements)
 
-    int bx = blockIdx.x;
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
     int tx = threadIdx.x;
-    int row = bx * blockSize + tx;
 
-    float Csub = 0.0f;
+    float sum = 0.0f;
 
     int numTiles = (N + blockSize - 1) / blockSize;
 
     for (int tile = 0; tile < numTiles; tile++)
     {
-        // Load tile of matrix A into shared memory
-        for (int k = 0; k < blockSize; k++)
-        {
-            int aRow = bx * blockSize + k;
-            int aCol = tile * blockSize + tx;
-            int aIndex = aRow * N + aCol;
-            if (aRow < N && aCol < N)
-                As[k * blockSize + tx] = g_MatA[aIndex];
-            else
-                As[k * blockSize + tx] = 0.0f;
-        }
-
-        // Load tile of vector V into shared memory
+        // Cooperatively load tile of vector V into shared memory
         int vIndex = tile * blockSize + tx;
         if (vIndex < N)
-            bs[tx] = g_VecV[vIndex];
+            Vs[tx] = g_VecV[vIndex];
         else
-            bs[tx] = 0.0f;
+            Vs[tx] = 0.0f;
 
         __syncthreads();
 
-        // Compute partial dot product for this tile
+        // Each thread computes partial dot product for its row
         if (row < N)
         {
-            for (int k = 0; k < blockSize; k++)
+            int tileStart = tile * blockSize;
+            int tileEnd = min(tileStart + blockSize, N);
+            for (int j = tileStart; j < tileEnd; j++)
             {
-                Csub += As[tx * blockSize + k] * bs[k];
+                // Read matrix element from global memory (coalesced access)
+                // Read vector element from shared memory (reused across threads in block)
+                sum += g_MatA[row * N + j] * Vs[j - tileStart];
             }
         }
 
@@ -92,7 +83,7 @@ __global__ void Av_Product_Shared(float* g_MatA, float* g_VecV, float* g_VecW, i
     }
 
     if (row < N)
-        g_VecW[row] = Csub;
+        g_VecW[row] = sum;
 }
 
 // Matrix-Vector Product using Global Memory only
@@ -298,7 +289,8 @@ int main(int argc, char** argv)
     int threadsPerBlock = BlockSize;
     int blocksPerGrid = (N + threadsPerBlock - 1) / threadsPerBlock;
     int sharedMemSize = threadsPerBlock * sizeof(float);
-    int sharedMemSizeAv = threadsPerBlock * threadsPerBlock * sizeof(float) + threadsPerBlock * sizeof(float);
+    // Shared memory for Av_Product_Shared: only need vector tile (blockSize floats)
+    int sharedMemSizeAv = threadsPerBlock * sizeof(float);
     
     // Start total GPU timing (including memory transfers)
     clock_gettime(CLOCK_REALTIME, &t_start);
