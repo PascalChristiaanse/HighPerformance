@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=exp_c_u_n4000_b32
+#SBATCH --job-name=exp_c_unified_n4000_b32
 #SBATCH --time=00:10:00
 #SBATCH --partition=gpu-a100-small
 #SBATCH --ntasks=1
@@ -12,10 +12,10 @@
 # Load required modules
 module load 2025 cuda/12 gcc
 
-# Run with CUDA Unified Memory (cudaMallocManaged)
-echo "=== Experiment C: Speedup Analysis (Unified Memory) ==="
+# Run with UNIFIED Memory (cudaMallocManaged - automatic migration)
+echo "=== Memory Type: UNIFIED Memory (cudaMallocManaged) ==="
 echo "Matrix size: 4000, Block size: 32"
-echo "Memory management: unified (cudaMallocManaged)"
+echo "Kernel: Av_Product_Shared with unified memory allocation"
 echo ""
 
 srun ./power_gpu --size 4000 --blocksize 32 --max_iteration 100 --use_shared 1 --use_unified 1

@@ -1,0 +1,39 @@
+
+Lmod is automatically replacing "2024r1" with "2025".
+
+
+The following have been reloaded with a version change:
+  1) cmake/3.27.7 => cmake/3.30.5     3) ninja/1.11.1 => ninja/1.12.1
+  2) gcc/11.3.0 => gcc/13.3.0         4) openmpi/4.1.6 => openmpi/4.1.7
+
+=== Memory Type: SHARED GPU Memory (On-chip) ===
+Matrix size: 4000, Block size: 64
+Kernel: Av_Product_Shared (tiled with shared memory)
+
+Matrix size: 4000 x 4000
+Block size: 64 threads
+Max iterations: 100
+Kernel mode: Shared
+Memory management: Manual transfers
+
+=== CPU Power Method ===
+CPU converged after 22 iterations, lambda = 199987.656250
+CPU runtime: 0.216295 seconds
+
+=== GPU Power Method ===
+GPU: NVIDIA A100 80GB PCIe MIG 1g.10gb (Compute 8.0)
+Shared memory per block: 49152 bytes
+Max threads per block: 1024
+GPU converged after 4 iterations, lambda = 199987.578125
+GPU runtime (with memcpy): 0.096600 seconds
+GPU runtime (compute only): 0.008422 seconds
+Memory transfer time: 0.088178 seconds
+
+=== Performance Summary ===
+Speedup (with memcpy): 2.24x
+Speedup (compute only): 25.68x
+Lambda difference (CPU-GPU): 7.812500e-02
+
+=== CSV_OUTPUT ===
+matrix_size,block_size,memory_mode,memory_mgmt,cpu_time,gpu_time_with_memcpy,gpu_time_no_memcpy,memcpy_time,speedup_with_memcpy,speedup_no_memcpy,cpu_lambda,gpu_lambda,cpu_iterations,gpu_iterations
+4000,64,shared,manual,0.216295,0.096600,0.008422,0.088178,2.239078,25.681614,199987.656250,199987.578125,100,4

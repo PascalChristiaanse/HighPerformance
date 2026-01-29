@@ -1,16 +1,19 @@
-Experiment C Configuration
-========================================
+Experiment C Configuration: Three Memory Types Comparison
+=======================================================
+
 Matrix sizes: [50, 500, 2000, 4000]
 Block sizes: [32, 64, 100]
 Max iterations: 100
-Kernel mode: shared
-Total experiments: 24
-  - Manual memory: 12
-  - Unified memory: 12
+Total experiments: 36
 
-Speedup metrics:
-  (i)   speedup_no_memcpy = cpu_time / gpu_time_no_memcpy (manual)
-  (ii)  speedup_with_memcpy = cpu_time / gpu_time_with_memcpy (manual)
-  (iii) speedup = cpu_time / gpu_time (unified memory)
+Memory Types:
+  1. GLOBAL (12 jobs) - use_shared=0, use_unified=0
+     Kernel: Av_Product_Global (direct VRAM access)
+  2. SHARED (12 jobs) - use_shared=1, use_unified=0
+     Kernel: Av_Product_Shared (tiled with on-chip shared memory)
+  3. UNIFIED (12 jobs) - use_shared=1, use_unified=1
+     Allocation: cudaMallocManaged (automatic migration)
 
-Job IDs: 9002064, 9002065, 9002066, 9002067, 9002068, 9002069, 9002070, 9002071, 9002072, 9002073, 9002074, 9002075, 9002076, 9002077, 9002078, 9002079, 9002080, 9002081, 9002082, 9002083, 9002084, 9002085, 9002086, 9002087
+Speedup = CPU_time / GPU_time_with_memcpy
+
+Job IDs: 9008947, 9008948, 9008949, 9008950, 9008951, 9008952, 9008953, 9008954, 9008955, 9008956, 9008957, 9008958, 9008959, 9008960, 9008961, 9008962, 9008963, 9008964, 9008965, 9008966, 9008967, 9008968, 9008969, 9008970, 9008971, 9008972, 9008973, 9008974, 9008975, 9008976, 9008977, 9008978, 9008979, 9008980, 9008981, 9008982
