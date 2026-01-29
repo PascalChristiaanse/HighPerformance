@@ -63,383 +63,462 @@ def parse_output_file(filepath):
 
 
 def collect_results(results_dir):
-    """Collect all results from output files."""
-    results_manual = []
+    """Collect all results from output files, categorized by memory type."""
+    results_global = []
+    results_shared = []
     results_unified = []
     
     results_path = Path(results_dir)
     if not results_path.exists():
         print(f"Results directory not found: {results_dir}")
-        return results_manual, results_unified
+        return results_global, results_shared, results_unified
     
     for output_file in results_path.glob("run_*.out"):
         data = parse_output_file(output_file)
         if data:
             data['source_file'] = output_file.name
-            # Determine if this is unified or manual based on filename or data
-            mem_mgmt = data.get('memory_mgmt', 'manual')
-            if 'unified' in output_file.name.lower() or mem_mgmt == 'unified':
-                data['memory_mgmt'] = 'unified'
+            filename_lower = output_file.name.lower()
+            
+            # Determine memory type from filename or data
+            mem_mode = data.get('memory_mode', '')
+            mem_mgmt = data.get('memory_mgmt', '')
+            
+            if 'unified' in filename_lower or mem_mgmt == 'unified':
+                data['memory_type'] = 'unified'
                 results_unified.append(data)
-                print(f"Parsed (unified): {output_file.name}")
+                print(f"Parsed (UNIFIED): {output_file.name}")
+            elif 'global' in filename_lower or mem_mode == 'global':
+                data['memory_type'] = 'global'
+                results_global.append(data)
+                print(f"Parsed (GLOBAL): {output_file.name}")
             else:
-                data['memory_mgmt'] = 'manual'
-                results_manual.append(data)
-                print(f"Parsed (manual): {output_file.name}")
+                # Default to shared (includes old 'manual' and 'shared' files)
+                data['memory_type'] = 'shared'
+                results_shared.append(data)
+                print(f"Parsed (SHARED): {output_file.name}")
     
-    return results_manual, results_unified
+    return results_global, results_shared, results_unified
 
 
-def create_speedup_table(results_manual, results_unified, output_dir):
-    """Create detailed speedup comparison table."""
-    if not results_manual and not results_unified:
+def create_speedup_table(results_global, results_shared, results_unified, output_dir):
+    """Create detailed speedup comparison table for all three memory types."""
+    if not results_global and not results_shared and not results_unified:
         print("No results to create table from.")
-        return None, None
+        return None, None, None
     
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     
-    # Process manual results
-    sorted_manual = sorted(results_manual, key=lambda x: (x.get('matrix_size', 0), x.get('block_size', 0)))
+    # Sort all results
+    sorted_global = sorted(results_global, key=lambda x: (x.get('matrix_size', 0), x.get('block_size', 0)))
+    sorted_shared = sorted(results_shared, key=lambda x: (x.get('matrix_size', 0), x.get('block_size', 0)))
     sorted_unified = sorted(results_unified, key=lambda x: (x.get('matrix_size', 0), x.get('block_size', 0)))
     
-    # Calculate additional metrics for manual results
-    for r in sorted_manual:
-        cpu_time = r.get('cpu_time', 0)
-        gpu_with_mem = r.get('gpu_time_with_memcpy', 0)
-        gpu_no_mem = r.get('gpu_time_no_memcpy', 0)
-        memcpy_time = r.get('memcpy_time', 0)
-        
-        # Memory overhead percentage
-        if gpu_with_mem > 0:
-            r['memcpy_overhead_pct'] = (memcpy_time / gpu_with_mem) * 100
-        else:
-            r['memcpy_overhead_pct'] = 0
-        
-        # Speedup difference
-        r['speedup_difference'] = r.get('speedup_no_memcpy', 0) - r.get('speedup_with_memcpy', 0)
+    # Create lookups by (matrix_size, block_size)
+    global_lookup = {(r['matrix_size'], r['block_size']): r for r in sorted_global}
+    shared_lookup = {(r['matrix_size'], r['block_size']): r for r in sorted_shared}
+    unified_lookup = {(r['matrix_size'], r['block_size']): r for r in sorted_unified}
     
-    # Write detailed CSV for manual results
-    columns_manual = [
-        'matrix_size', 'block_size', 'cpu_time', 
-        'gpu_time_with_memcpy', 'gpu_time_no_memcpy', 'memcpy_time',
-        'speedup_with_memcpy', 'speedup_no_memcpy', 
-        'speedup_difference', 'memcpy_overhead_pct'
-    ]
+    # Get all unique (matrix_size, block_size) combinations
+    all_keys = set(global_lookup.keys()) | set(shared_lookup.keys()) | set(unified_lookup.keys())
+    sorted_keys = sorted(all_keys, key=lambda x: (x[0], x[1]))
     
-    csv_path = output_path / "experiment_c_speedup_manual.csv"
+    # Write combined CSV with all three memory types
+    # For Global and Shared: show speedup both WITH and WITHOUT memcpy
+    # For Unified: only show one speedup (no explicit memcpy to exclude)
+    csv_path = output_path / "experiment_c_three_memory_types.csv"
     with open(csv_path, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=columns_manual, extrasaction='ignore')
-        writer.writeheader()
-        for row in sorted_manual:
-            writer.writerow(row)
-    print(f"Manual speedup CSV saved to: {csv_path}")
-    
-    # Write CSV for unified memory results
-    if sorted_unified:
-        columns_unified = [
-            'matrix_size', 'block_size', 'cpu_time', 
-            'gpu_time_with_memcpy', 'gpu_time_no_memcpy', 'memcpy_time',
-            'speedup_with_memcpy', 'speedup_no_memcpy'
-        ]
+        writer = csv.writer(f)
+        writer.writerow([
+            'matrix_size', 'block_size',
+            'global_speedup_with_memcpy', 'global_speedup_no_memcpy',
+            'shared_speedup_with_memcpy', 'shared_speedup_no_memcpy',
+            'unified_speedup',
+            'cpu_time', 'best_total', 'best_compute_only'
+        ])
         
-        csv_path_unified = output_path / "experiment_c_speedup_unified.csv"
-        with open(csv_path_unified, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=columns_unified, extrasaction='ignore')
-            writer.writeheader()
-            for row in sorted_unified:
-                writer.writerow(row)
-        print(f"Unified speedup CSV saved to: {csv_path_unified}")
+        for key in sorted_keys:
+            n, b = key
+            g = global_lookup.get(key, {})
+            s = shared_lookup.get(key, {})
+            u = unified_lookup.get(key, {})
+            
+            # Speedup with memcpy (total time including transfers)
+            g_speedup_with = g.get('speedup_with_memcpy', 0)
+            s_speedup_with = s.get('speedup_with_memcpy', 0)
+            u_speedup = u.get('speedup_with_memcpy', 0)
+            
+            # Speedup without memcpy (compute-only, for Global/Shared only)
+            g_speedup_no = g.get('speedup_no_memcpy', 0)
+            s_speedup_no = s.get('speedup_no_memcpy', 0)
+            
+            # Determine best for total time (fair comparison including transfers)
+            speedups_total = {'Global': g_speedup_with, 'Shared': s_speedup_with, 'Unified': u_speedup}
+            best_total = max(speedups_total, key=speedups_total.get) if any(speedups_total.values()) else 'N/A'
+            
+            # Determine best for compute-only (Global vs Shared only, Unified not applicable)
+            speedups_compute = {'Global': g_speedup_no, 'Shared': s_speedup_no}
+            best_compute = max(speedups_compute, key=speedups_compute.get) if any(speedups_compute.values()) else 'N/A'
+            
+            cpu_time = g.get('cpu_time', s.get('cpu_time', u.get('cpu_time', 0)))
+            
+            writer.writerow([
+                n, b,
+                f"{g_speedup_with:.2f}" if g_speedup_with else 'N/A',
+                f"{g_speedup_no:.2f}" if g_speedup_no else 'N/A',
+                f"{s_speedup_with:.2f}" if s_speedup_with else 'N/A',
+                f"{s_speedup_no:.2f}" if s_speedup_no else 'N/A',
+                f"{u_speedup:.2f}" if u_speedup else 'N/A',
+                f"{cpu_time:.6f}",
+                best_total,
+                best_compute
+            ])
+    print(f"Three memory types CSV saved to: {csv_path}")
     
-    # Write combined LaTeX table
-    latex_path = output_path / "experiment_c_table.tex"
+    # Write LaTeX table comparing all three memory types
+    # Table 1: With memory transfers (total time - fair comparison)
+    latex_path = output_path / "experiment_c_three_memory_table.tex"
     with open(latex_path, 'w') as f:
         f.write("\\begin{table}[htbp]\n")
         f.write("\\centering\n")
-        f.write("\\caption{GPU Speedup Analysis: Manual vs Unified Memory}\n")
-        f.write("\\label{tab:experiment_c}\n")
-        
-        # Check if we have unified results
-        has_unified = len(sorted_unified) > 0
-        
-        if has_unified:
-            f.write("\\begin{tabular}{|c|c|c|c|c|c|c|}\n")
-            f.write("\\hline\n")
-            f.write("N & Block & \\multicolumn{2}{c|}{Manual Memory} & Unified & Memcpy \\% & Best \\\\\n")
-            f.write(" &  & (i) no copy & (ii) w/ copy & (iii) & overhead & Method \\\\\n")
-        else:
-            f.write("\\begin{tabular}{|c|c|c|c|c|c|}\n")
-            f.write("\\hline\n")
-            f.write("N & Block & Speedup (i) & Speedup (ii) & $\\Delta$ & Memcpy \\% \\\\\n")
-            f.write(" &  & (no memcpy) & (with memcpy) & & overhead \\\\\n")
+        f.write("\\caption{GPU Speedup (Including Memory Transfers): All Three Memory Types vs CPU}\n")
+        f.write("\\label{tab:three_memory_with_memcpy}\n")
+        f.write("\\begin{tabular}{|c|c|c|c|c|c|}\n")
+        f.write("\\hline\n")
+        f.write("N & Block & Global & Shared & Unified & Best \\\\\n")
+        f.write(" & Size & Memory & Memory & Memory & \\\\\n")
         f.write("\\hline\n")
         
-        # Match unified results to manual by (matrix_size, block_size)
-        unified_lookup = {(r['matrix_size'], r['block_size']): r for r in sorted_unified}
-        
-        for row in sorted_manual:
-            key = (row.get('matrix_size'), row.get('block_size'))
-            unified_row = unified_lookup.get(key, {})
+        for key in sorted_keys:
+            n, b = key
+            g = global_lookup.get(key, {})
+            s = shared_lookup.get(key, {})
+            u = unified_lookup.get(key, {})
             
-            speedup_no = row.get('speedup_no_memcpy', 0)
-            speedup_with = row.get('speedup_with_memcpy', 0)
-            speedup_unified = unified_row.get('speedup_with_memcpy', 0)  # For unified, total time is relevant
+            g_speedup = g.get('speedup_with_memcpy', 0)
+            s_speedup = s.get('speedup_with_memcpy', 0)
+            u_speedup = u.get('speedup_with_memcpy', 0)
             
-            f.write(f"{row.get('matrix_size', 'N/A')} & ")
-            f.write(f"{row.get('block_size', 'N/A')} & ")
-            f.write(f"{speedup_no:.2f} & ")
-            f.write(f"{speedup_with:.2f} & ")
+            # Determine best and highlight
+            speedups = {'Global': g_speedup, 'Shared': s_speedup, 'Unified': u_speedup}
+            best = max(speedups, key=speedups.get) if any(speedups.values()) else 'N/A'
             
-            if has_unified:
-                f.write(f"{speedup_unified:.2f} & ")
-                f.write(f"{row.get('memcpy_overhead_pct', 0):.1f}\\% & ")
-                # Determine best method
-                if speedup_unified > speedup_with:
-                    best = "Unified"
-                else:
-                    best = "Manual"
-                f.write(f"{best}")
-            else:
-                f.write(f"{row.get('speedup_difference', 0):.2f} & ")
-                f.write(f"{row.get('memcpy_overhead_pct', 0):.1f}\\%")
-            f.write(" \\\\\n")
+            # Format with bold for best
+            g_str = f"\\textbf{{{g_speedup:.2f}x}}" if best == 'Global' and g_speedup > 0 else f"{g_speedup:.2f}x" if g_speedup else "N/A"
+            s_str = f"\\textbf{{{s_speedup:.2f}x}}" if best == 'Shared' and s_speedup > 0 else f"{s_speedup:.2f}x" if s_speedup else "N/A"
+            u_str = f"\\textbf{{{u_speedup:.2f}x}}" if best == 'Unified' and u_speedup > 0 else f"{u_speedup:.2f}x" if u_speedup else "N/A"
+            
+            f.write(f"{n} & {b} & {g_str} & {s_str} & {u_str} & {best} \\\\\n")
         
         f.write("\\hline\n")
         f.write("\\end{tabular}\n")
+        f.write("\\vspace{2mm}\n")
+        f.write("\\footnotesize{Speedup = CPU\\_time / GPU\\_time (including memory transfers). This is the fair comparison.}\n")
         f.write("\\end{table}\n")
-    print(f"LaTeX table saved to: {latex_path}")
+    print(f"Three memory types LaTeX table (with memcpy) saved to: {latex_path}")
     
-    return sorted_manual, sorted_unified
+    # Table 2: Without memory transfers (compute-only - Global vs Shared only)
+    latex_path_compute = output_path / "experiment_c_compute_only_table.tex"
+    with open(latex_path_compute, 'w') as f:
+        f.write("\\begin{table}[htbp]\n")
+        f.write("\\centering\n")
+        f.write("\\caption{GPU Speedup (Compute Only, No Memory Transfers): Global vs Shared Memory}\n")
+        f.write("\\label{tab:compute_only}\n")
+        f.write("\\begin{tabular}{|c|c|c|c|c|}\n")
+        f.write("\\hline\n")
+        f.write("N & Block Size & Global Memory & Shared Memory & Best \\\\\n")
+        f.write("\\hline\n")
+        
+        for key in sorted_keys:
+            n, b = key
+            g = global_lookup.get(key, {})
+            s = shared_lookup.get(key, {})
+            
+            g_speedup = g.get('speedup_no_memcpy', 0)
+            s_speedup = s.get('speedup_no_memcpy', 0)
+            
+            # Determine best and highlight
+            speedups = {'Global': g_speedup, 'Shared': s_speedup}
+            best = max(speedups, key=speedups.get) if any(speedups.values()) else 'N/A'
+            
+            # Format with bold for best
+            g_str = f"\\textbf{{{g_speedup:.2f}x}}" if best == 'Global' and g_speedup > 0 else f"{g_speedup:.2f}x" if g_speedup else "N/A"
+            s_str = f"\\textbf{{{s_speedup:.2f}x}}" if best == 'Shared' and s_speedup > 0 else f"{s_speedup:.2f}x" if s_speedup else "N/A"
+            
+            f.write(f"{n} & {b} & {g_str} & {s_str} & {best} \\\\\n")
+        
+        f.write("\\hline\n")
+        f.write("\\end{tabular}\n")
+        f.write("\\vspace{2mm}\n")
+        f.write("\\footnotesize{Speedup = CPU\\_time / GPU\\_compute\\_time (excluding memory transfers). Unified Memory not shown as it has no explicit memcpy.}\n")
+        f.write("\\end{table}\n")
+    print(f"Compute-only LaTeX table saved to: {latex_path_compute}")
+    
+    return sorted_global, sorted_shared, sorted_unified
 
 
-def create_speedup_plots(results_manual, results_unified, output_dir):
-    """Create speedup visualization plots."""
+def create_speedup_plots(results_global, results_shared, results_unified, output_dir):
+    """Create speedup visualization plots comparing all three memory types."""
     if not HAS_MATPLOTLIB:
         print("Skipping plots (matplotlib not available)")
         return
     
-    if not results_manual and not results_unified:
+    if not results_global and not results_shared and not results_unified:
         print("No results to plot.")
         return
     
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     
-    # Use manual results as primary (they have more detail)
-    results = results_manual if results_manual else results_unified
-    
-    # Organize data
-    by_block_size = {}
-    for r in results:
-        b = r.get('block_size')
-        if b not in by_block_size:
-            by_block_size[b] = []
-        by_block_size[b].append(r)
-    
-    # Plot 1: Speedup comparison (with vs without memcpy)
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    
-    ax1 = axes[0]
-    block_sizes = sorted(by_block_size.keys())
-    
-    for bs in block_sizes:
-        data = sorted(by_block_size[bs], key=lambda x: x.get('matrix_size', 0))
-        sizes = [d['matrix_size'] for d in data]
-        speedup_with = [d['speedup_with_memcpy'] for d in data]
-        speedup_no = [d['speedup_no_memcpy'] for d in data]
-        
-        ax1.plot(sizes, speedup_no, 's-', label=f'Compute only (B={bs})', linewidth=2)
-        ax1.plot(sizes, speedup_with, 'o--', label=f'With memcpy (B={bs})', alpha=0.7)
-    
-    ax1.set_xlabel('Matrix Size (N)', fontsize=12)
-    ax1.set_ylabel('Speedup (CPU time / GPU time)', fontsize=12)
-    ax1.set_title('Speedup: Compute Only vs Including Memory Copy', fontsize=12)
-    ax1.legend(fontsize=9)
-    ax1.grid(True, alpha=0.3)
-    ax1.axhline(y=1, color='r', linestyle=':', alpha=0.5, label='No speedup')
-    ax1.set_xscale('log')
-    
-    # Plot 2: Memory copy overhead
-    ax2 = axes[1]
-    
-    for bs in block_sizes:
-        data = sorted(by_block_size[bs], key=lambda x: x.get('matrix_size', 0))
-        sizes = [d['matrix_size'] for d in data]
-        overhead = [d.get('memcpy_overhead_pct', 0) for d in data]
-        
-        ax2.plot(sizes, overhead, 'o-', label=f'Block size={bs}', linewidth=2)
-    
-    ax2.set_xlabel('Matrix Size (N)', fontsize=12)
-    ax2.set_ylabel('Memory Copy Overhead (%)', fontsize=12)
-    ax2.set_title('Memory Transfer Overhead as Percentage of Total GPU Time', fontsize=12)
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
-    ax2.set_xscale('log')
-    
-    plt.tight_layout()
-    plot_path = output_path / "experiment_c_speedup_comparison.png"
-    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
-    print(f"Speedup comparison plot saved to: {plot_path}")
-    plt.close()
-    
-    # Plot 2: Bar chart comparing speedups (manual vs unified if available)
-    fig, ax = plt.subplots(figsize=(14, 6))
-    
-    # Prepare data for grouped bar chart
-    matrix_sizes = sorted(set(r['matrix_size'] for r in results))
-    x = range(len(matrix_sizes))
-    
-    has_unified = len(results_unified) > 0
-    if has_unified:
-        width = 0.25
-    else:
-        width = 0.35
-    
-    # Average speedups across block sizes
-    speedup_with_avg = []
-    speedup_no_avg = []
-    speedup_unified_avg = []
-    
+    # Create lookups
+    global_lookup = {(r['matrix_size'], r['block_size']): r for r in results_global}
+    shared_lookup = {(r['matrix_size'], r['block_size']): r for r in results_shared}
     unified_lookup = {(r['matrix_size'], r['block_size']): r for r in results_unified}
     
-    for n in matrix_sizes:
-        data_manual = [r for r in results if r['matrix_size'] == n]
-        speedup_with_avg.append(sum(d['speedup_with_memcpy'] for d in data_manual) / len(data_manual) if data_manual else 0)
-        speedup_no_avg.append(sum(d['speedup_no_memcpy'] for d in data_manual) / len(data_manual) if data_manual else 0)
-        
-        if has_unified:
-            data_unified = [r for r in results_unified if r['matrix_size'] == n]
-            speedup_unified_avg.append(sum(d['speedup_with_memcpy'] for d in data_unified) / len(data_unified) if data_unified else 0)
+    # Get all unique values
+    all_results = results_global + results_shared + results_unified
+    matrix_sizes = sorted(set(r['matrix_size'] for r in all_results))
+    block_sizes = sorted(set(r['block_size'] for r in all_results))
     
-    if has_unified:
-        bars1 = ax.bar([i - width for i in x], speedup_no_avg, width, 
-                       label='(i) Compute only (no memcpy)', color='steelblue')
-        bars2 = ax.bar([i for i in x], speedup_with_avg, width, 
-                       label='(ii) Manual transfers (with memcpy)', color='coral')
-        bars3 = ax.bar([i + width for i in x], speedup_unified_avg, width, 
-                       label='(iii) Unified Memory', color='seagreen')
-    else:
-        bars1 = ax.bar([i - width/2 for i in x], speedup_no_avg, width, 
-                       label='(i) Excluding memory copy', color='steelblue')
-        bars2 = ax.bar([i + width/2 for i in x], speedup_with_avg, width, 
-                       label='(ii) Including memory copy', color='coral')
+    # ==========================================================================
+    # Plot 1: Line plot - Speedup vs Matrix Size (for each block size)
+    # ==========================================================================
+    fig, axes = plt.subplots(1, len(block_sizes), figsize=(5*len(block_sizes), 5), squeeze=False)
+    
+    colors = {'Global': 'tab:red', 'Shared': 'tab:blue', 'Unified': 'tab:green'}
+    markers = {'Global': 'o', 'Shared': 's', 'Unified': '^'}
+    
+    for idx, bs in enumerate(block_sizes):
+        ax = axes[0, idx]
+        
+        for mem_type, lookup, label in [
+            ('Global', global_lookup, 'Global Memory'),
+            ('Shared', shared_lookup, 'Shared Memory'),
+            ('Unified', unified_lookup, 'Unified Memory')
+        ]:
+            sizes = []
+            speedups = []
+            for n in matrix_sizes:
+                r = lookup.get((n, bs))
+                if r:
+                    sizes.append(n)
+                    speedups.append(r.get('speedup_with_memcpy', 0))
+            
+            if sizes:
+                ax.plot(sizes, speedups, f'{markers[mem_type]}-', 
+                       color=colors[mem_type], label=label, linewidth=2, markersize=8)
+        
+        ax.set_xlabel('Matrix Size (N)', fontsize=11)
+        ax.set_ylabel('Speedup vs CPU', fontsize=11)
+        ax.set_title(f'Block Size = {bs}', fontsize=12)
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        ax.axhline(y=1, color='gray', linestyle=':', alpha=0.7)
+        ax.set_xscale('log')
+    
+    plt.suptitle('GPU Speedup (With Memcpy): All Three Memory Types vs CPU', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plot_path = output_path / "experiment_c_three_memory_lines.png"
+    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+    print(f"Three memory types line plot saved to: {plot_path}")
+    plt.close()
+    
+    # ==========================================================================
+    # Plot 1b: Line plot - Speedup WITH vs WITHOUT memcpy (Global and Shared only)
+    # ==========================================================================
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    
+    colors_with = {'Global': 'tab:red', 'Shared': 'tab:blue'}
+    colors_no = {'Global': 'lightcoral', 'Shared': 'lightblue'}
+    markers = {'Global': 'o', 'Shared': 's'}
+    
+    # Plot for a representative block size (middle one or first if only one)
+    rep_block = block_sizes[len(block_sizes)//2] if block_sizes else 16
+    
+    # Left subplot: Global Memory (with vs without memcpy)
+    ax = axes[0]
+    for speedup_type, linestyle, alpha, suffix in [
+        ('speedup_with_memcpy', '-', 1.0, ' (total)'),
+        ('speedup_no_memcpy', '--', 0.7, ' (compute)')
+    ]:
+        sizes = []
+        speedups = []
+        for n in matrix_sizes:
+            r = global_lookup.get((n, rep_block))
+            if r:
+                sizes.append(n)
+                speedups.append(r.get(speedup_type, 0))
+        if sizes:
+            ax.plot(sizes, speedups, f'o{linestyle}', color='tab:red', 
+                   label=f'Global{suffix}', linewidth=2, markersize=8, alpha=alpha)
+    ax.set_xlabel('Matrix Size (N)', fontsize=11)
+    ax.set_ylabel('Speedup vs CPU', fontsize=11)
+    ax.set_title(f'Global Memory: Effect of Memory Transfers\n(Block Size = {rep_block})', fontsize=12)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    ax.axhline(y=1, color='gray', linestyle=':', alpha=0.7)
+    ax.set_xscale('log')
+    
+    # Right subplot: Shared Memory (with vs without memcpy)
+    ax = axes[1]
+    for speedup_type, linestyle, alpha, suffix in [
+        ('speedup_with_memcpy', '-', 1.0, ' (total)'),
+        ('speedup_no_memcpy', '--', 0.7, ' (compute)')
+    ]:
+        sizes = []
+        speedups = []
+        for n in matrix_sizes:
+            r = shared_lookup.get((n, rep_block))
+            if r:
+                sizes.append(n)
+                speedups.append(r.get(speedup_type, 0))
+        if sizes:
+            ax.plot(sizes, speedups, f's{linestyle}', color='tab:blue',
+                   label=f'Shared{suffix}', linewidth=2, markersize=8, alpha=alpha)
+    ax.set_xlabel('Matrix Size (N)', fontsize=11)
+    ax.set_ylabel('Speedup vs CPU', fontsize=11)
+    ax.set_title(f'Shared Memory: Effect of Memory Transfers\n(Block Size = {rep_block})', fontsize=12)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    ax.axhline(y=1, color='gray', linestyle=':', alpha=0.7)
+    ax.set_xscale('log')
+    
+    plt.suptitle('Memory Transfer Overhead: With vs Without cudaMemcpy', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plot_path = output_path / "experiment_c_memcpy_overhead.png"
+    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+    print(f"Memcpy overhead comparison plot saved to: {plot_path}")
+    plt.close()
+    
+    # ==========================================================================
+    # Plot 2: Grouped Bar Chart - Speedup comparison
+    # ==========================================================================
+    fig, ax = plt.subplots(figsize=(14, 6))
+    
+    x = range(len(matrix_sizes))
+    width = 0.25
+    
+    # Average speedups across block sizes
+    global_avg = []
+    shared_avg = []
+    unified_avg = []
+    
+    for n in matrix_sizes:
+        g_vals = [global_lookup.get((n, b), {}).get('speedup_with_memcpy', 0) for b in block_sizes]
+        s_vals = [shared_lookup.get((n, b), {}).get('speedup_with_memcpy', 0) for b in block_sizes]
+        u_vals = [unified_lookup.get((n, b), {}).get('speedup_with_memcpy', 0) for b in block_sizes]
+        
+        global_avg.append(sum(v for v in g_vals if v) / max(len([v for v in g_vals if v]), 1))
+        shared_avg.append(sum(v for v in s_vals if v) / max(len([v for v in s_vals if v]), 1))
+        unified_avg.append(sum(v for v in u_vals if v) / max(len([v for v in u_vals if v]), 1))
+    
+    bars1 = ax.bar([i - width for i in x], global_avg, width, label='Global Memory', color='tab:red', alpha=0.8)
+    bars2 = ax.bar([i for i in x], shared_avg, width, label='Shared Memory', color='tab:blue', alpha=0.8)
+    bars3 = ax.bar([i + width for i in x], unified_avg, width, label='Unified Memory', color='tab:green', alpha=0.8)
     
     ax.set_xlabel('Matrix Size (N)', fontsize=12)
-    ax.set_ylabel('Average Speedup', fontsize=12)
-    title = 'Speedup Comparison: Effect of Memory Management' if has_unified else 'Speedup Comparison: Effect of Memory Copy'
-    ax.set_title(title + ' (averaged over block sizes)', fontsize=12)
+    ax.set_ylabel('Average Speedup vs CPU', fontsize=12)
+    ax.set_title('GPU Speedup Comparison: All Three Memory Types\n(averaged over block sizes)', fontsize=12)
     ax.set_xticks(x)
     ax.set_xticklabels(matrix_sizes)
     ax.legend()
     ax.grid(True, alpha=0.3, axis='y')
-    ax.axhline(y=1, color='r', linestyle=':', alpha=0.5)
+    ax.axhline(y=1, color='gray', linestyle=':', alpha=0.7)
     
-    # Add value labels on bars
-    for bar in bars1:
-        height = bar.get_height()
-        ax.annotate(f'{height:.1f}x',
-                    xy=(bar.get_x() + bar.get_width() / 2, height),
-                    xytext=(0, 3), textcoords="offset points",
-                    ha='center', va='bottom', fontsize=8)
-    
-    for bar in bars2:
-        height = bar.get_height()
-        ax.annotate(f'{height:.1f}x',
-                    xy=(bar.get_x() + bar.get_width() / 2, height),
-                    xytext=(0, 3), textcoords="offset points",
-                    ha='center', va='bottom', fontsize=8)
-    
-    if has_unified:
-        for bar in bars3:
+    # Add value labels
+    for bars in [bars1, bars2, bars3]:
+        for bar in bars:
             height = bar.get_height()
-            ax.annotate(f'{height:.1f}x',
-                        xy=(bar.get_x() + bar.get_width() / 2, height),
-                        xytext=(0, 3), textcoords="offset points",
-                        ha='center', va='bottom', fontsize=8)
+            if height > 0:
+                ax.annotate(f'{height:.1f}x',
+                           xy=(bar.get_x() + bar.get_width()/2, height),
+                           xytext=(0, 3), textcoords="offset points",
+                           ha='center', va='bottom', fontsize=8)
     
     plt.tight_layout()
-    plot_path = output_path / "experiment_c_speedup_bars.png"
+    plot_path = output_path / "experiment_c_three_memory_bars.png"
     plt.savefig(plot_path, dpi=150, bbox_inches='tight')
-    print(f"Speedup bar chart saved to: {plot_path}")
+    print(f"Three memory types bar chart saved to: {plot_path}")
     plt.close()
     
-    # Plot 3: Unified Memory comparison (if available)
-    if has_unified and results_manual:
-        create_unified_comparison_plot(results_manual, results_unified, output_dir)
+    # ==========================================================================
+    # Plot 3: Heatmap-style comparison
+    # ==========================================================================
+    create_memory_heatmap(results_global, results_shared, results_unified, output_dir)
 
 
-def create_unified_comparison_plot(results_manual, results_unified, output_dir):
-    """Create dedicated plot comparing manual vs unified memory."""
+def create_memory_heatmap(results_global, results_shared, results_unified, output_dir):
+    """Create heatmap comparing memory types."""
     if not HAS_MATPLOTLIB:
+        return
+    
+    try:
+        import numpy as np
+    except ImportError:
         return
     
     output_path = Path(output_dir)
     
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    
-    # Create lookup for matching results
+    # Create lookups
+    global_lookup = {(r['matrix_size'], r['block_size']): r for r in results_global}
+    shared_lookup = {(r['matrix_size'], r['block_size']): r for r in results_shared}
     unified_lookup = {(r['matrix_size'], r['block_size']): r for r in results_unified}
     
-    # Left plot: Line comparison by matrix size
-    ax1 = axes[0]
-    by_block = {}
-    for r in results_manual:
-        b = r['block_size']
-        if b not in by_block:
-            by_block[b] = {'sizes': [], 'manual': [], 'unified': []}
-        by_block[b]['sizes'].append(r['matrix_size'])
-        by_block[b]['manual'].append(r['speedup_with_memcpy'])
-        key = (r['matrix_size'], r['block_size'])
-        unified_r = unified_lookup.get(key, {})
-        by_block[b]['unified'].append(unified_r.get('speedup_with_memcpy', 0))
+    all_results = results_global + results_shared + results_unified
+    if not all_results:
+        return
     
-    colors = plt.cm.tab10.colors
-    for i, (bs, data) in enumerate(sorted(by_block.items())):
-        sizes, manual, unified = zip(*sorted(zip(data['sizes'], data['manual'], data['unified'])))
-        ax1.plot(sizes, manual, 'o-', color=colors[i], label=f'Manual B={bs}', linewidth=2)
-        ax1.plot(sizes, unified, 's--', color=colors[i], label=f'Unified B={bs}', alpha=0.7)
+    matrix_sizes = sorted(set(r['matrix_size'] for r in all_results))
+    block_sizes = sorted(set(r['block_size'] for r in all_results))
     
-    ax1.set_xlabel('Matrix Size (N)', fontsize=12)
-    ax1.set_ylabel('Speedup', fontsize=12)
-    ax1.set_title('Manual vs Unified Memory Speedup', fontsize=12)
-    ax1.legend(fontsize=8, ncol=2)
-    ax1.grid(True, alpha=0.3)
-    ax1.set_xscale('log')
-    ax1.axhline(y=1, color='r', linestyle=':', alpha=0.5)
+    # Create data arrays for heatmap
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
     
-    # Right plot: Speedup ratio (Unified / Manual)
-    ax2 = axes[1]
+    for idx, (lookup, title, cmap) in enumerate([
+        (global_lookup, 'Global Memory', 'Reds'),
+        (shared_lookup, 'Shared Memory', 'Blues'),
+        (unified_lookup, 'Unified Memory', 'Greens')
+    ]):
+        data = np.zeros((len(matrix_sizes), len(block_sizes)))
+        
+        for i, n in enumerate(matrix_sizes):
+            for j, b in enumerate(block_sizes):
+                r = lookup.get((n, b))
+                if r:
+                    data[i, j] = r.get('speedup_with_memcpy', 0)
+        
+        ax = axes[idx]
+        im = ax.imshow(data, cmap=cmap, aspect='auto')
+        
+        ax.set_xticks(range(len(block_sizes)))
+        ax.set_xticklabels(block_sizes)
+        ax.set_yticks(range(len(matrix_sizes)))
+        ax.set_yticklabels(matrix_sizes)
+        ax.set_xlabel('Block Size')
+        ax.set_ylabel('Matrix Size (N)')
+        ax.set_title(title)
+        
+        # Add text annotations
+        for i in range(len(matrix_sizes)):
+            for j in range(len(block_sizes)):
+                text = f'{data[i,j]:.1f}x' if data[i,j] > 0 else 'N/A'
+                ax.text(j, i, text, ha='center', va='center', fontsize=9,
+                       color='white' if data[i,j] > data.max()*0.5 else 'black')
+        
+        plt.colorbar(im, ax=ax, label='Speedup')
     
-    for i, (bs, data) in enumerate(sorted(by_block.items())):
-        sizes, manual, unified = zip(*sorted(zip(data['sizes'], data['manual'], data['unified'])))
-        ratio = [u/m if m > 0 else 0 for u, m in zip(unified, manual)]
-        ax2.plot(sizes, ratio, 'o-', color=colors[i], label=f'Block size={bs}', linewidth=2)
-    
-    ax2.set_xlabel('Matrix Size (N)', fontsize=12)
-    ax2.set_ylabel('Unified / Manual Speedup Ratio', fontsize=12)
-    ax2.set_title('Relative Performance: Unified vs Manual Memory', fontsize=12)
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
-    ax2.set_xscale('log')
-    ax2.axhline(y=1, color='r', linestyle='-', alpha=0.7, label='Break-even')
-    ax2.fill_between(ax2.get_xlim(), 1, 2, alpha=0.1, color='green', label='Unified better')
-    ax2.fill_between(ax2.get_xlim(), 0, 1, alpha=0.1, color='red', label='Manual better')
-    
+    plt.suptitle('Speedup Heatmap: All Three Memory Types', fontsize=14, fontweight='bold')
     plt.tight_layout()
-    plot_path = output_path / "experiment_c_unified_comparison.png"
+    plot_path = output_path / "experiment_c_three_memory_heatmap.png"
     plt.savefig(plot_path, dpi=150, bbox_inches='tight')
-    print(f"Unified comparison plot saved to: {plot_path}")
+    print(f"Three memory types heatmap saved to: {plot_path}")
     plt.close()
 
 
-def create_surface_plots(results_manual, results_unified, output_dir):
-    """Create 3D surface plots for speedup vs matrix size and block size."""
+def create_surface_plots(results_global, results_shared, results_unified, output_dir):
+    """Create 3D surface plots comparing all three memory types."""
     if not HAS_MATPLOTLIB:
         print("Skipping surface plots (matplotlib not available)")
-        return
-    
-    if not results_manual and not results_unified:
-        print("No results for surface plots.")
         return
     
     try:
@@ -449,15 +528,22 @@ def create_surface_plots(results_manual, results_unified, output_dir):
         print("Skipping surface plots (numpy or mplot3d not available)")
         return
     
+    all_results = results_global + results_shared + results_unified
+    if not all_results:
+        print("No results for surface plots.")
+        return
+    
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     
-    # Use manual results for main surface plots
-    results = results_manual if results_manual else results_unified
+    # Create lookups
+    global_lookup = {(r['matrix_size'], r['block_size']): r for r in results_global}
+    shared_lookup = {(r['matrix_size'], r['block_size']): r for r in results_shared}
+    unified_lookup = {(r['matrix_size'], r['block_size']): r for r in results_unified}
     
     # Extract unique values
-    matrix_sizes = sorted(set(r['matrix_size'] for r in results))
-    block_sizes = sorted(set(r['block_size'] for r in results))
+    matrix_sizes = sorted(set(r['matrix_size'] for r in all_results))
+    block_sizes = sorted(set(r['block_size'] for r in all_results))
     
     if len(matrix_sizes) < 2 or len(block_sizes) < 2:
         print("Not enough data points for surface plot")
@@ -466,129 +552,59 @@ def create_surface_plots(results_manual, results_unified, output_dir):
     # Create meshgrid
     X, Y = np.meshgrid(block_sizes, matrix_sizes)
     
-    # Create Z arrays
-    Z_speedup_with = np.zeros_like(X, dtype=float)
-    Z_speedup_no = np.zeros_like(X, dtype=float)
-    Z_overhead = np.zeros_like(X, dtype=float)
-    
-    for r in results:
-        i = matrix_sizes.index(r['matrix_size'])
-        j = block_sizes.index(r['block_size'])
-        Z_speedup_with[i, j] = r.get('speedup_with_memcpy', 0)
-        Z_speedup_no[i, j] = r.get('speedup_no_memcpy', 0)
-        Z_overhead[i, j] = r.get('memcpy_overhead_pct', 0)
-    
-    # Surface plot: Speedup comparison (manual memory)
-    fig = plt.figure(figsize=(16, 5))
-    
-    ax1 = fig.add_subplot(131, projection='3d')
-    surf1 = ax1.plot_surface(X, Y, Z_speedup_with, cmap='viridis', alpha=0.8)
-    ax1.set_xlabel('Block Size')
-    ax1.set_ylabel('Matrix Size (N)')
-    ax1.set_zlabel('Speedup')
-    ax1.set_title('Speedup (with memcpy)')
-    fig.colorbar(surf1, ax=ax1, shrink=0.5, aspect=10)
-    
-    ax2 = fig.add_subplot(132, projection='3d')
-    surf2 = ax2.plot_surface(X, Y, Z_speedup_no, cmap='plasma', alpha=0.8)
-    ax2.set_xlabel('Block Size')
-    ax2.set_ylabel('Matrix Size (N)')
-    ax2.set_zlabel('Speedup')
-    ax2.set_title('Speedup (compute only)')
-    fig.colorbar(surf2, ax=ax2, shrink=0.5, aspect=10)
-    
-    ax3 = fig.add_subplot(133, projection='3d')
-    surf3 = ax3.plot_surface(X, Y, Z_overhead, cmap='coolwarm', alpha=0.8)
-    ax3.set_xlabel('Block Size')
-    ax3.set_ylabel('Matrix Size (N)')
-    ax3.set_zlabel('Overhead (%)')
-    ax3.set_title('Memory Copy Overhead')
-    fig.colorbar(surf3, ax=ax3, shrink=0.5, aspect=10)
-    
-    plt.tight_layout()
-    plot_path = output_path / "experiment_c_surface.png"
-    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
-    print(f"Surface plot saved to: {plot_path}")
-    plt.close()
-    
-    # Additional surface plot: Unified vs Manual comparison (if available)
-    if results_unified and results_manual:
-        create_unified_surface_plot(results_manual, results_unified, output_dir)
-
-
-def create_unified_surface_plot(results_manual, results_unified, output_dir):
-    """Create surface plot comparing unified vs manual memory performance."""
-    try:
-        from mpl_toolkits.mplot3d import Axes3D
-        import numpy as np
-    except ImportError:
-        return
-    
-    output_path = Path(output_dir)
-    
-    # Extract unique values
-    matrix_sizes = sorted(set(r['matrix_size'] for r in results_manual))
-    block_sizes = sorted(set(r['block_size'] for r in results_manual))
-    
-    # Create meshgrid
-    X, Y = np.meshgrid(block_sizes, matrix_sizes)
-    
-    # Create Z arrays
-    Z_manual = np.zeros_like(X, dtype=float)
+    # Create Z arrays for each memory type
+    Z_global = np.zeros_like(X, dtype=float)
+    Z_shared = np.zeros_like(X, dtype=float)
     Z_unified = np.zeros_like(X, dtype=float)
-    Z_ratio = np.zeros_like(X, dtype=float)
     
-    unified_lookup = {(r['matrix_size'], r['block_size']): r for r in results_unified}
+    for i, n in enumerate(matrix_sizes):
+        for j, b in enumerate(block_sizes):
+            g = global_lookup.get((n, b), {})
+            s = shared_lookup.get((n, b), {})
+            u = unified_lookup.get((n, b), {})
+            Z_global[i, j] = g.get('speedup_with_memcpy', 0)
+            Z_shared[i, j] = s.get('speedup_with_memcpy', 0)
+            Z_unified[i, j] = u.get('speedup_with_memcpy', 0)
     
-    for r in results_manual:
-        i = matrix_sizes.index(r['matrix_size'])
-        j = block_sizes.index(r['block_size'])
-        Z_manual[i, j] = r.get('speedup_with_memcpy', 0)
-        
-        key = (r['matrix_size'], r['block_size'])
-        unified_r = unified_lookup.get(key, {})
-        Z_unified[i, j] = unified_r.get('speedup_with_memcpy', 0)
-        
-        if Z_manual[i, j] > 0:
-            Z_ratio[i, j] = Z_unified[i, j] / Z_manual[i, j]
-    
-    # Create figure
-    fig = plt.figure(figsize=(16, 5))
+    # Surface plot: All three memory types
+    fig = plt.figure(figsize=(18, 5))
     
     ax1 = fig.add_subplot(131, projection='3d')
-    surf1 = ax1.plot_surface(X, Y, Z_manual, cmap='viridis', alpha=0.8)
+    surf1 = ax1.plot_surface(X, Y, Z_global, cmap='Reds', alpha=0.8)
     ax1.set_xlabel('Block Size')
     ax1.set_ylabel('Matrix Size (N)')
     ax1.set_zlabel('Speedup')
-    ax1.set_title('Manual Memory Speedup')
+    ax1.set_title('Global Memory')
     fig.colorbar(surf1, ax=ax1, shrink=0.5, aspect=10)
     
     ax2 = fig.add_subplot(132, projection='3d')
-    surf2 = ax2.plot_surface(X, Y, Z_unified, cmap='plasma', alpha=0.8)
+    surf2 = ax2.plot_surface(X, Y, Z_shared, cmap='Blues', alpha=0.8)
     ax2.set_xlabel('Block Size')
     ax2.set_ylabel('Matrix Size (N)')
     ax2.set_zlabel('Speedup')
-    ax2.set_title('Unified Memory Speedup')
+    ax2.set_title('Shared Memory')
     fig.colorbar(surf2, ax=ax2, shrink=0.5, aspect=10)
     
     ax3 = fig.add_subplot(133, projection='3d')
-    surf3 = ax3.plot_surface(X, Y, Z_ratio, cmap='RdYlGn', alpha=0.8)
+    surf3 = ax3.plot_surface(X, Y, Z_unified, cmap='Greens', alpha=0.8)
     ax3.set_xlabel('Block Size')
     ax3.set_ylabel('Matrix Size (N)')
-    ax3.set_zlabel('Ratio')
-    ax3.set_title('Unified/Manual Ratio (>1 = Unified better)')
+    ax3.set_zlabel('Speedup')
+    ax3.set_title('Unified Memory')
     fig.colorbar(surf3, ax=ax3, shrink=0.5, aspect=10)
     
+    plt.suptitle('Speedup Surface: All Three Memory Types vs CPU', fontsize=14, fontweight='bold')
     plt.tight_layout()
-    plot_path = output_path / "experiment_c_unified_surface.png"
+    plot_path = output_path / "experiment_c_three_memory_surface.png"
     plt.savefig(plot_path, dpi=150, bbox_inches='tight')
-    print(f"Unified comparison surface plot saved to: {plot_path}")
+    print(f"Three memory types surface plot saved to: {plot_path}")
     plt.close()
 
 
-def generate_analysis_summary(results_manual, results_unified, output_dir):
-    """Generate a text summary of the speedup analysis."""
-    if not results_manual and not results_unified:
+def generate_analysis_summary(results_global, results_shared, results_unified, output_dir):
+    """Generate a text summary of the three memory types analysis."""
+    all_results = results_global + results_shared + results_unified
+    if not all_results:
         return
     
     output_path = Path(output_dir)
@@ -597,146 +613,155 @@ def generate_analysis_summary(results_manual, results_unified, output_dir):
     summary_path = output_path / "experiment_c_analysis.txt"
     
     with open(summary_path, 'w') as f:
-        f.write("=" * 60 + "\n")
-        f.write("Experiment C: Speedup Analysis Summary\n")
-        f.write("=" * 60 + "\n\n")
+        f.write("=" * 65 + "\n")
+        f.write("Experiment C: Three Memory Types Comparison Summary\n")
+        f.write("=" * 65 + "\n\n")
         
-        # Manual memory statistics
-        if results_manual:
-            speedup_with = [r['speedup_with_memcpy'] for r in results_manual]
-            speedup_no = [r['speedup_no_memcpy'] for r in results_manual]
-            memcpy_overhead = [r.get('memcpy_overhead_pct', 0) for r in results_manual]
-            
-            f.write("MANUAL MEMORY MANAGEMENT:\n")
-            f.write("-" * 40 + "\n")
-            f.write(f"Speedup (i) - excluding memcpy:\n")
-            f.write(f"  Min: {min(speedup_no):.2f}x\n")
-            f.write(f"  Max: {max(speedup_no):.2f}x\n")
-            f.write(f"  Avg: {sum(speedup_no)/len(speedup_no):.2f}x\n\n")
-            
-            f.write(f"Speedup (ii) - including memcpy:\n")
-            f.write(f"  Min: {min(speedup_with):.2f}x\n")
-            f.write(f"  Max: {max(speedup_with):.2f}x\n")
-            f.write(f"  Avg: {sum(speedup_with)/len(speedup_with):.2f}x\n\n")
-            
-            f.write(f"Memory copy overhead:\n")
-            f.write(f"  Min: {min(memcpy_overhead):.1f}%\n")
-            f.write(f"  Max: {max(memcpy_overhead):.1f}%\n")
-            f.write(f"  Avg: {sum(memcpy_overhead)/len(memcpy_overhead):.1f}%\n\n")
-            
-            best_with = max(results_manual, key=lambda x: x['speedup_with_memcpy'])
-            best_no = max(results_manual, key=lambda x: x['speedup_no_memcpy'])
-            
-            f.write(f"Best config (with memcpy): {best_with['speedup_with_memcpy']:.2f}x\n")
-            f.write(f"  N={best_with['matrix_size']}, Block={best_with['block_size']}\n")
-            f.write(f"Best config (compute only): {best_no['speedup_no_memcpy']:.2f}x\n")
-            f.write(f"  N={best_no['matrix_size']}, Block={best_no['block_size']}\n\n")
+        # Global memory statistics
+        if results_global:
+            speedup_with = [r['speedup_with_memcpy'] for r in results_global if r.get('speedup_with_memcpy')]
+            speedup_no = [r['speedup_no_memcpy'] for r in results_global if r.get('speedup_no_memcpy')]
+            if speedup_with:
+                f.write("1. GLOBAL GPU MEMORY (VRAM):\n")
+                f.write("-" * 40 + "\n")
+                f.write("   Kernel: Av_Product_Global (direct VRAM access)\n")
+                f.write(f"   Speedup (with memcpy): Min={min(speedup_with):.2f}x, Max={max(speedup_with):.2f}x, Avg={sum(speedup_with)/len(speedup_with):.2f}x\n")
+                if speedup_no:
+                    f.write(f"   Speedup (compute only): Min={min(speedup_no):.2f}x, Max={max(speedup_no):.2f}x, Avg={sum(speedup_no)/len(speedup_no):.2f}x\n")
+                best = max(results_global, key=lambda x: x.get('speedup_with_memcpy', 0))
+                f.write(f"   Best config: N={best['matrix_size']}, Block={best['block_size']} -> {best['speedup_with_memcpy']:.2f}x\n\n")
+        
+        # Shared memory statistics
+        if results_shared:
+            speedup_with = [r['speedup_with_memcpy'] for r in results_shared if r.get('speedup_with_memcpy')]
+            speedup_no = [r['speedup_no_memcpy'] for r in results_shared if r.get('speedup_no_memcpy')]
+            if speedup_with:
+                f.write("2. SHARED GPU MEMORY (On-chip):\n")
+                f.write("-" * 40 + "\n")
+                f.write("   Kernel: Av_Product_Shared (tiled with shared memory cache)\n")
+                f.write(f"   Speedup (with memcpy): Min={min(speedup_with):.2f}x, Max={max(speedup_with):.2f}x, Avg={sum(speedup_with)/len(speedup_with):.2f}x\n")
+                if speedup_no:
+                    f.write(f"   Speedup (compute only): Min={min(speedup_no):.2f}x, Max={max(speedup_no):.2f}x, Avg={sum(speedup_no)/len(speedup_no):.2f}x\n")
+                best = max(results_shared, key=lambda x: x.get('speedup_with_memcpy', 0))
+                f.write(f"   Best config: N={best['matrix_size']}, Block={best['block_size']} -> {best['speedup_with_memcpy']:.2f}x\n\n")
         
         # Unified memory statistics
         if results_unified:
-            speedup_unified = [r['speedup_with_memcpy'] for r in results_unified]
-            
-            f.write("UNIFIED MEMORY (cudaMallocManaged):\n")
-            f.write("-" * 40 + "\n")
-            f.write(f"Speedup (iii) - unified memory:\n")
-            f.write(f"  Min: {min(speedup_unified):.2f}x\n")
-            f.write(f"  Max: {max(speedup_unified):.2f}x\n")
-            f.write(f"  Avg: {sum(speedup_unified)/len(speedup_unified):.2f}x\n\n")
-            
-            best_unified = max(results_unified, key=lambda x: x['speedup_with_memcpy'])
-            f.write(f"Best config: {best_unified['speedup_with_memcpy']:.2f}x\n")
-            f.write(f"  N={best_unified['matrix_size']}, Block={best_unified['block_size']}\n\n")
+            speedup = [r['speedup_with_memcpy'] for r in results_unified if r.get('speedup_with_memcpy')]
+            if speedup:
+                f.write("3. UNIFIED MEMORY (cudaMallocManaged):\n")
+                f.write("-" * 40 + "\n")
+                f.write("   Allocation: Automatic CPU-GPU migration by CUDA runtime\n")
+                f.write(f"   Speedup: Min={min(speedup):.2f}x, Max={max(speedup):.2f}x, Avg={sum(speedup)/len(speedup):.2f}x\n")
+                best = max(results_unified, key=lambda x: x.get('speedup_with_memcpy', 0))
+                f.write(f"   Best config: N={best['matrix_size']}, Block={best['block_size']} -> {best['speedup_with_memcpy']:.2f}x\n\n")
         
-        # Comparison analysis (if both available)
-        if results_manual and results_unified:
-            f.write("UNIFIED vs MANUAL COMPARISON:\n")
-            f.write("-" * 40 + "\n")
-            
-            unified_lookup = {(r['matrix_size'], r['block_size']): r for r in results_unified}
-            
-            unified_better = 0
-            manual_better = 0
-            
-            for r in results_manual:
-                key = (r['matrix_size'], r['block_size'])
-                unified_r = unified_lookup.get(key)
-                if unified_r:
-                    if unified_r['speedup_with_memcpy'] > r['speedup_with_memcpy']:
-                        unified_better += 1
-                    else:
-                        manual_better += 1
-            
-            f.write(f"Configurations where Unified is better: {unified_better}\n")
-            f.write(f"Configurations where Manual is better: {manual_better}\n\n")
+        # Comparison
+        f.write("COMPARISON ANALYSIS:\n")
+        f.write("-" * 40 + "\n")
         
-        # Observations
+        global_lookup = {(r['matrix_size'], r['block_size']): r for r in results_global}
+        shared_lookup = {(r['matrix_size'], r['block_size']): r for r in results_shared}
+        unified_lookup = {(r['matrix_size'], r['block_size']): r for r in results_unified}
+        
+        all_keys = set(global_lookup.keys()) | set(shared_lookup.keys()) | set(unified_lookup.keys())
+        
+        wins = {'Global': 0, 'Shared': 0, 'Unified': 0}
+        for key in all_keys:
+            g = global_lookup.get(key, {}).get('speedup_with_memcpy', 0)
+            s = shared_lookup.get(key, {}).get('speedup_with_memcpy', 0)
+            u = unified_lookup.get(key, {}).get('speedup_with_memcpy', 0)
+            best = max([('Global', g), ('Shared', s), ('Unified', u)], key=lambda x: x[1])
+            if best[1] > 0:
+                wins[best[0]] += 1
+        
+        f.write(f"Best performance wins (total time including memcpy):\n")
+        f.write(f"  Global Memory:  {wins['Global']} configurations\n")
+        f.write(f"  Shared Memory:  {wins['Shared']} configurations\n")
+        f.write(f"  Unified Memory: {wins['Unified']} configurations\n\n")
+        
+        # Compute-only wins (Global vs Shared only)
+        wins_compute = {'Global': 0, 'Shared': 0}
+        for key in all_keys:
+            g = global_lookup.get(key, {}).get('speedup_no_memcpy', 0)
+            s = shared_lookup.get(key, {}).get('speedup_no_memcpy', 0)
+            if g > s and g > 0:
+                wins_compute['Global'] += 1
+            elif s > g and s > 0:
+                wins_compute['Shared'] += 1
+        
+        f.write(f"Best compute-only performance wins (excluding memcpy):\n")
+        f.write(f"  Global Memory:  {wins_compute['Global']} configurations\n")
+        f.write(f"  Shared Memory:  {wins_compute['Shared']} configurations\n")
+        f.write(f"  (Unified not compared - no explicit memcpy to exclude)\n\n")
+        
+        # Key observations
         f.write("KEY OBSERVATIONS:\n")
         f.write("-" * 40 + "\n")
-        f.write("1. The difference between speedup (i) and (ii) shows the impact\n")
-        f.write("   of memory transfer overhead on overall performance.\n\n")
-        f.write("2. For small matrices, memory copy overhead is typically higher\n")
-        f.write("   relative to computation time.\n\n")
-        f.write("3. As matrix size increases, the compute-to-transfer ratio\n")
-        f.write("   improves, making GPU acceleration more beneficial.\n\n")
-        
-        if results_unified:
-            f.write("4. Unified Memory (cudaMallocManaged) simplifies programming\n")
-            f.write("   but may have different performance characteristics due to\n")
-            f.write("   on-demand page migration and driver overhead.\n\n")
-            f.write("5. On modern GPUs with good Unified Memory support, the\n")
-            f.write("   performance difference may be minimal for compute-bound\n")
-            f.write("   workloads, while Unified Memory may excel for sparse\n")
-            f.write("   access patterns where not all data is needed.\n")
+        f.write("1. GLOBAL Memory: Direct VRAM access. Simple but slow due to\n")
+        f.write("   high latency global memory reads on each thread.\n\n")
+        f.write("2. SHARED Memory: Fast on-chip cache (~100x faster than global).\n")
+        f.write("   Tiled approach reduces global memory accesses by reusing\n")
+        f.write("   data within thread blocks.\n\n")
+        f.write("3. UNIFIED Memory: Automatic migration between CPU and GPU.\n")
+        f.write("   Simplifies programming but adds driver overhead for page\n")
+        f.write("   migration. Performance varies by access pattern.\n\n")
+        f.write("4. For compute-bound workloads with regular access patterns,\n")
+        f.write("   SHARED memory typically provides the best performance.\n")
     
     print(f"Analysis summary saved to: {summary_path}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Analyze experiment C results (speedup)')
+    parser = argparse.ArgumentParser(description='Analyze experiment C results (three memory types)')
     parser.add_argument('--results-dir', default='results/experiment_c',
                         help='Directory containing output files')
     parser.add_argument('--output-dir', default='analysis_output/experiment_c',
                         help='Directory for output plots and tables')
     args = parser.parse_args()
     
-    print("=" * 60)
-    print("Analysis C: Speedup Analysis")
-    print("  - (i) without memory copy")
-    print("  - (ii) with memory copy")
-    print("  - (iii) Unified Memory (optional)")
-    print("=" * 60)
+    print("=" * 65)
+    print("Analysis C: Three Memory Types Comparison (vs CPU)")
+    print("  1. Global GPU Memory (VRAM)")
+    print("  2. Shared GPU Memory (on-chip cache)")
+    print("  3. Unified Memory (cudaMallocManaged)")
+    print("=" * 65)
     
     # Collect results
     print(f"\nCollecting results from: {args.results_dir}")
-    results_manual, results_unified = collect_results(args.results_dir)
+    results_global, results_shared, results_unified = collect_results(args.results_dir)
     
-    if not results_manual and not results_unified:
+    total = len(results_global) + len(results_shared) + len(results_unified)
+    if total == 0:
         print("\nNo results found. Make sure experiments have completed.")
         return
     
-    print(f"\nCollected {len(results_manual)} manual memory results")
-    print(f"Collected {len(results_unified)} unified memory results")
+    print(f"\nCollected results:")
+    print(f"  Global memory:  {len(results_global)} files")
+    print(f"  Shared memory:  {len(results_shared)} files")
+    print(f"  Unified memory: {len(results_unified)} files")
     
     # Create tables
     print("\nGenerating speedup tables...")
-    results_manual, results_unified = create_speedup_table(results_manual, results_unified, args.output_dir)
+    results_global, results_shared, results_unified = create_speedup_table(
+        results_global, results_shared, results_unified, args.output_dir)
     
     # Create plots
     print("\nGenerating plots...")
-    create_speedup_plots(results_manual, results_unified, args.output_dir)
+    create_speedup_plots(results_global, results_shared, results_unified, args.output_dir)
     
     # Create surface plots
     print("\nGenerating surface plots...")
-    create_surface_plots(results_manual, results_unified, args.output_dir)
+    create_surface_plots(results_global, results_shared, results_unified, args.output_dir)
     
     # Generate summary
     print("\nGenerating analysis summary...")
-    generate_analysis_summary(results_manual, results_unified, args.output_dir)
+    generate_analysis_summary(results_global, results_shared, results_unified, args.output_dir)
     
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 65)
     print("Analysis complete!")
     print(f"Output saved to: {args.output_dir}")
-    print("=" * 60)
+    print("=" * 65)
 
 
 if __name__ == "__main__":
